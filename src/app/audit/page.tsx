@@ -4,39 +4,46 @@ import { useState, useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { Plus, Trash2, ChevronDown, ChevronUp, Sparkles, ArrowRight } from "lucide-react";
+import { Plus, Trash2, ChevronUp, Sparkles, ArrowRight, Users } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/Card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { useAuditStore } from "@/hooks/useAuditStore";
 import { getPlansForTool } from "@/lib/auditEngine";
 import { AITool, AIPlan, UseCase } from "@/types/audit";
-import { cn } from "@/lib/utils";
+import { cn, formatCurrency } from "@/lib/utils";
 
-// ─── Form Validation Schema ───────────────────────────────────────────────
+// ─── Validation Schema ────────────────────────────────────────────────────
+
+const AI_TOOL_VALUES = [
+  "ChatGPT", "Claude", "Cursor", "GitHub Copilot",
+  "Gemini", "OpenAI API", "Anthropic API", "Windsurf",
+] as const;
+
+const USE_CASE_VALUES = ["coding", "writing", "research", "data", "mixed"] as const;
 
 const toolSchema = z.object({
-  tool: z.enum(["ChatGPT", "Claude", "Cursor", "GitHub Copilot", "Gemini", "OpenAI API"] as const, {
-    message: "Please select an AI tool",
-  }),
+  tool: z.enum(AI_TOOL_VALUES, { message: "Please select an AI tool" }),
   plan: z.string().min(1, "Please select a plan"),
   monthlySpend: z
     .number({ message: "Enter a valid number" })
-    .min(0, "Spend cannot be negative")
-    .max(100000, "Enter a realistic monthly spend"),
+    .min(0, "Cannot be negative")
+    .max(100000, "Enter a realistic spend"),
   seats: z
     .number({ message: "Enter a valid number" })
-    .int("Seats must be a whole number")
+    .int("Must be a whole number")
     .min(1, "Minimum 1 seat")
-    .max(10000, "Enter a realistic seat count"),
-  useCase: z.enum(
-    ["Coding", "Writing", "Research", "Customer Support", "Data Analysis", "General Productivity", "Other"] as const,
-    { message: "Please select a use case" }
-  ),
+    .max(10000, "Max 10,000 seats"),
+  teamSize: z
+    .number({ message: "Enter a valid number" })
+    .int("Must be a whole number")
+    .min(1, "Minimum 1")
+    .max(100000, "Max 100,000"),
+  useCase: z.enum(USE_CASE_VALUES, { message: "Please select a use case" }),
 });
 
 type ToolFormData = z.infer<typeof toolSchema>;
@@ -44,79 +51,85 @@ type ToolFormData = z.infer<typeof toolSchema>;
 // ─── Constants ────────────────────────────────────────────────────────────
 
 const AI_TOOLS: AITool[] = [
-  "ChatGPT", "Claude", "Cursor", "GitHub Copilot", "Gemini", "OpenAI API",
+  "ChatGPT", "Claude", "Cursor", "GitHub Copilot",
+  "Gemini", "OpenAI API", "Anthropic API", "Windsurf",
 ];
 
-const USE_CASES: UseCase[] = [
-  "Coding", "Writing", "Research", "Customer Support", "Data Analysis", "General Productivity", "Other",
+const USE_CASES: { value: UseCase; label: string }[] = [
+  { value: "coding",   label: "💻 Coding / Development" },
+  { value: "writing",  label: "✍️ Writing / Content" },
+  { value: "research", label: "🔍 Research / Analysis" },
+  { value: "data",     label: "📊 Data Processing" },
+  { value: "mixed",    label: "🔀 Mixed / General" },
 ];
 
-const TOOL_COLORS: Record<AITool, string> = {
-  "ChatGPT": "border-emerald-500/30 bg-emerald-500/5",
-  "Claude": "border-orange-500/30 bg-orange-500/5",
-  "Cursor": "border-violet-500/30 bg-violet-500/5",
-  "GitHub Copilot": "border-slate-500/30 bg-slate-500/5",
-  "Gemini": "border-blue-500/30 bg-blue-500/5",
-  "OpenAI API": "border-teal-500/30 bg-teal-500/5",
+const TOOL_META: Record<AITool, { color: string; icon: string; company: string }> = {
+  "ChatGPT":       { color: "border-emerald-500/30 bg-emerald-500/5",  icon: "🤖", company: "OpenAI" },
+  "Claude":        { color: "border-orange-500/30 bg-orange-500/5",    icon: "🌊", company: "Anthropic" },
+  "Cursor":        { color: "border-violet-500/30 bg-violet-500/5",    icon: "⚡", company: "Anysphere" },
+  "GitHub Copilot":{ color: "border-slate-500/30 bg-slate-500/5",      icon: "🐙", company: "GitHub" },
+  "Gemini":        { color: "border-blue-500/30 bg-blue-500/5",        icon: "✨", company: "Google" },
+  "OpenAI API":    { color: "border-teal-500/30 bg-teal-500/5",        icon: "🔌", company: "OpenAI" },
+  "Anthropic API": { color: "border-amber-500/30 bg-amber-500/5",      icon: "🧠", company: "Anthropic" },
+  "Windsurf":      { color: "border-cyan-500/30 bg-cyan-500/5",        icon: "🏄", company: "Codeium" },
 };
 
-const TOOL_ICONS: Record<AITool, string> = {
-  "ChatGPT": "🤖",
-  "Claude": "🌊",
-  "Cursor": "⚡",
-  "GitHub Copilot": "🐙",
-  "Gemini": "✨",
-  "OpenAI API": "🔌",
-};
-
-// ─── Tool Card Component ──────────────────────────────────────────────────
+// ─── Tool Card ────────────────────────────────────────────────────────────
 
 interface ToolCardProps {
   toolId: string;
-  tool: string;
+  tool: AITool;
   plan: string;
   monthlySpend: number;
   seats: number;
+  teamSize: number;
   useCase: string;
   onRemove: (id: string) => void;
-  index: number;
 }
 
-function ToolCard({ toolId, tool, plan, monthlySpend, seats, useCase, onRemove, index }: ToolCardProps) {
-  const toolKey = tool as AITool;
-  const colorClass = TOOL_COLORS[toolKey] ?? "border-white/10 bg-white/5";
-  const icon = TOOL_ICONS[toolKey] ?? "🛠️";
+function ToolCard({ toolId, tool, plan, monthlySpend, seats, teamSize, useCase, onRemove }: ToolCardProps) {
+  const meta = TOOL_META[tool] ?? { color: "border-white/10 bg-white/5", icon: "🛠️", company: "" };
+  const useCaseLabel = USE_CASES.find((u) => u.value === useCase)?.label ?? useCase;
 
   return (
     <div
       className={cn(
         "rounded-xl border p-4 transition-all duration-300 animate-fade-in-up",
-        colorClass
+        meta.color
       )}
       role="article"
-      aria-label={`${tool} tool entry`}
+      aria-label={`${tool} tool entry — $${monthlySpend}/month`}
     >
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-center gap-3 min-w-0">
-          <span className="text-2xl flex-shrink-0" aria-hidden="true">{icon}</span>
+          <span className="text-2xl flex-shrink-0" aria-hidden="true">{meta.icon}</span>
           <div className="min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
-              <h3 className="font-semibold text-white text-sm">{tool}</h3>
+              <span className="font-semibold text-white text-sm">{tool}</span>
               <Badge variant="info" className="text-xs">{plan}</Badge>
             </div>
-            <p className="text-xs text-slate-500 mt-0.5">
-              {seats} seat{seats !== 1 ? "s" : ""} · {useCase}
+            <p className="text-xs text-slate-500 mt-0.5 flex items-center gap-2">
+              <span>{seats} seat{seats !== 1 ? "s" : ""}</span>
+              <span aria-hidden="true">·</span>
+              <span className="flex items-center gap-1">
+                <Users className="h-3 w-3" aria-hidden="true" />
+                {teamSize} total
+              </span>
+              <span aria-hidden="true">·</span>
+              <span>{useCaseLabel.replace(/^.+?\s/, "")}</span>
             </p>
           </div>
         </div>
         <div className="flex items-center gap-3 flex-shrink-0">
           <p className="text-sm font-semibold text-white font-mono-numbers">
-            ${monthlySpend.toFixed(0)}<span className="text-slate-500 font-normal text-xs">/mo</span>
+            {formatCurrency(monthlySpend)}
+            <span className="text-slate-500 font-normal text-xs">/mo</span>
           </p>
           <button
             onClick={() => onRemove(toolId)}
             className="p-1.5 rounded-md text-slate-500 hover:text-red-400 hover:bg-red-500/10 transition-colors"
             aria-label={`Remove ${tool} from audit`}
+            type="button"
           >
             <Trash2 className="h-4 w-4" aria-hidden="true" />
           </button>
@@ -145,15 +158,11 @@ function AddToolForm({ onAdd }: AddToolFormProps) {
     formState: { errors, isSubmitting },
   } = useForm<ToolFormData>({
     resolver: zodResolver(toolSchema),
-    defaultValues: {
-      seats: 1,
-      monthlySpend: 0,
-    },
+    defaultValues: { seats: 1, teamSize: 1, monthlySpend: 0 },
   });
 
   const watchedTool = watch("tool");
 
-  // Reset plan when tool changes
   useEffect(() => {
     if (watchedTool) {
       setValue("plan", "" as AIPlan);
@@ -165,153 +174,160 @@ function AddToolForm({ onAdd }: AddToolFormProps) {
     ? getPlansForTool(selectedTool).map((p) => ({ value: p, label: p }))
     : [];
 
+  const close = () => { setIsOpen(false); reset(); setSelectedTool(""); };
+
   const onSubmit = (data: ToolFormData) => {
     onAdd(data);
-    reset();
-    setSelectedTool("");
-    setIsOpen(false);
+    close();
   };
 
+  if (!isOpen) {
+    return (
+      <button
+        onClick={() => setIsOpen(true)}
+        className="w-full rounded-xl border border-dashed border-white/15 py-4 px-5 flex items-center justify-center gap-2 text-sm text-slate-500 hover:text-white hover:border-violet-500/40 hover:bg-violet-500/5 transition-all duration-200 group"
+        aria-expanded="false"
+        aria-label="Add a new AI tool to the audit"
+        type="button"
+      >
+        <Plus className="h-4 w-4 group-hover:rotate-90 transition-transform duration-300" aria-hidden="true" />
+        Add AI Tool
+      </button>
+    );
+  }
+
   return (
-    <div>
-      {!isOpen ? (
-        <button
-          onClick={() => setIsOpen(true)}
-          className="w-full rounded-xl border border-dashed border-white/15 py-4 px-5 flex items-center justify-center gap-2 text-sm text-slate-500 hover:text-white hover:border-violet-500/40 hover:bg-violet-500/5 transition-all duration-200 group"
-          aria-expanded={isOpen}
-          aria-controls="add-tool-form"
-        >
-          <Plus className="h-4 w-4 group-hover:rotate-90 transition-transform duration-300" aria-hidden="true" />
-          Add AI Tool
-        </button>
-      ) : (
-        <Card id="add-tool-form" className="border-violet-500/30 bg-violet-500/5">
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <CardTitle className="text-base">Add AI Tool</CardTitle>
-              <button
-                onClick={() => { setIsOpen(false); reset(); setSelectedTool(""); }}
-                className="text-slate-500 hover:text-white transition-colors"
-                aria-label="Cancel adding tool"
-              >
-                <ChevronUp className="h-5 w-5" aria-hidden="true" />
-              </button>
-            </div>
-          </CardHeader>
-          <CardContent>
-            <form
-              onSubmit={handleSubmit(onSubmit)}
-              noValidate
-              aria-label="Add AI tool form"
-            >
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {/* Tool */}
-                <Select
-                  id="tool"
-                  label="AI Tool *"
-                  placeholder="Select tool…"
-                  options={AI_TOOLS.map((t) => ({ value: t, label: t }))}
-                  error={errors.tool?.message}
-                  {...register("tool")}
-                  aria-required="true"
-                />
+    <Card className="border-violet-500/30 bg-violet-500/5" id="add-tool-form">
+      <CardHeader>
+        <div className="flex items-center justify-between">
+          <CardTitle className="text-base">Add AI Tool</CardTitle>
+          <button
+            onClick={close}
+            className="text-slate-500 hover:text-white transition-colors"
+            aria-label="Cancel"
+            type="button"
+          >
+            <ChevronUp className="h-5 w-5" aria-hidden="true" />
+          </button>
+        </div>
+      </CardHeader>
+      <CardContent>
+        <form onSubmit={handleSubmit(onSubmit)} noValidate aria-label="Add AI tool form">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
 
-                {/* Plan */}
-                <Select
-                  id="plan"
-                  label="Current Plan *"
-                  placeholder={selectedTool ? "Select plan…" : "Select tool first"}
-                  options={planOptions}
-                  error={errors.plan?.message}
-                  disabled={!selectedTool}
-                  {...register("plan")}
-                  aria-required="true"
-                />
+            {/* Tool */}
+            <Select
+              id="tool"
+              label="AI Tool *"
+              placeholder="Select tool…"
+              options={AI_TOOLS.map((t) => ({ value: t, label: `${TOOL_META[t].icon} ${t}` }))}
+              error={errors.tool?.message}
+              aria-required="true"
+              {...register("tool")}
+            />
 
-                {/* Monthly Spend */}
-                <Input
-                  id="monthlySpend"
-                  label="Monthly Spend (USD) *"
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  placeholder="e.g. 50"
-                  error={errors.monthlySpend?.message}
-                  aria-required="true"
-                  {...register("monthlySpend", { valueAsNumber: true })}
-                />
+            {/* Plan */}
+            <Select
+              id="plan"
+              label="Current Plan *"
+              placeholder={selectedTool ? "Select plan…" : "Select tool first"}
+              options={planOptions}
+              error={errors.plan?.message}
+              disabled={!selectedTool}
+              aria-required="true"
+              {...register("plan")}
+            />
 
-                {/* Seats */}
-                <Input
-                  id="seats"
-                  label="Number of Seats / Users *"
-                  type="number"
-                  min="1"
-                  step="1"
-                  placeholder="e.g. 3"
-                  error={errors.seats?.message}
-                  aria-required="true"
-                  {...register("seats", { valueAsNumber: true })}
-                />
+            {/* Monthly Spend */}
+            <Input
+              id="monthlySpend"
+              label="Monthly Spend (USD) *"
+              type="number"
+              min="0"
+              step="0.01"
+              placeholder="e.g. 50"
+              error={errors.monthlySpend?.message}
+              aria-required="true"
+              {...register("monthlySpend", { valueAsNumber: true })}
+            />
 
-                {/* Use Case */}
-                <div className="sm:col-span-2">
-                  <Select
-                    id="useCase"
-                    label="Primary Use Case *"
-                    placeholder="Select use case…"
-                    options={USE_CASES.map((u) => ({ value: u, label: u }))}
-                    error={errors.useCase?.message}
-                    {...register("useCase")}
-                    aria-required="true"
-                  />
-                </div>
-              </div>
+            {/* Seats */}
+            <Input
+              id="seats"
+              label="Number of Seats / Licenses *"
+              type="number"
+              min="1"
+              step="1"
+              placeholder="e.g. 3"
+              error={errors.seats?.message}
+              aria-required="true"
+              {...register("seats", { valueAsNumber: true })}
+            />
 
-              <div className="mt-5 flex gap-3">
-                <Button type="submit" size="sm" loading={isSubmitting}>
-                  <Plus className="h-4 w-4" aria-hidden="true" />
-                  Add Tool
-                </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => { setIsOpen(false); reset(); setSelectedTool(""); }}
-                >
-                  Cancel
-                </Button>
-              </div>
-            </form>
-          </CardContent>
-        </Card>
-      )}
-    </div>
+            {/* Team Size */}
+            <Input
+              id="teamSize"
+              label="Total Team Size *"
+              type="number"
+              min="1"
+              step="1"
+              placeholder="e.g. 10"
+              error={errors.teamSize?.message}
+              aria-required="true"
+              {...register("teamSize", { valueAsNumber: true })}
+            />
+
+            {/* Use Case */}
+            <Select
+              id="useCase"
+              label="Primary Use Case *"
+              placeholder="Select use case…"
+              options={USE_CASES}
+              error={errors.useCase?.message}
+              aria-required="true"
+              {...register("useCase")}
+            />
+
+          </div>
+
+          <div className="mt-5 flex gap-3">
+            <Button type="submit" size="sm" loading={isSubmitting}>
+              <Plus className="h-4 w-4" aria-hidden="true" />
+              Add Tool
+            </Button>
+            <Button type="button" variant="ghost" size="sm" onClick={close}>
+              Cancel
+            </Button>
+          </div>
+        </form>
+      </CardContent>
+    </Card>
   );
 }
 
-// ─── Main Audit Form Page ─────────────────────────────────────────────────
+// ─── Main Audit Page ──────────────────────────────────────────────────────
 
 export default function AuditPage() {
   const router = useRouter();
   const { tools, isLoaded, addTool, removeTool, clearTools } = useAuditStore();
   const [isRunning, setIsRunning] = useState(false);
 
-  const totalMonthlySpend = tools.reduce((sum, t) => sum + t.monthlySpend, 0);
+  const totalMonthlySpend = tools.reduce((s, t) => s + t.monthlySpend, 0);
+  const totalSeats = tools.reduce((s, t) => s + t.seats, 0);
 
   const handleRunAudit = async () => {
     if (tools.length === 0) return;
     setIsRunning(true);
-    // Small delay for UX — shows loading state before navigation
-    await new Promise((r) => setTimeout(r, 800));
+    await new Promise((r) => setTimeout(r, 700));
     router.push("/results");
   };
 
   return (
     <div className="relative min-h-screen py-12 px-4 sm:px-6">
       {/* Background glow */}
-      <div className="pointer-events-none absolute inset-0 -z-10">
+      <div className="pointer-events-none absolute inset-0 -z-10" aria-hidden="true">
         <div className="absolute top-0 right-1/4 w-[500px] h-[500px] bg-violet-600/8 rounded-full blur-3xl" />
+        <div className="absolute bottom-0 left-1/4 w-[400px] h-[400px] bg-indigo-600/6 rounded-full blur-3xl" />
       </div>
 
       <div className="mx-auto max-w-2xl">
@@ -319,45 +335,47 @@ export default function AuditPage() {
         <div className="mb-10">
           <Badge variant="info" className="mb-4">
             <Sparkles className="h-3.5 w-3.5" aria-hidden="true" />
-            Audit Form
+            Step 1 of 2 — Add Tools
           </Badge>
           <h1 className="text-3xl sm:text-4xl font-bold text-white mb-3">
             Add your AI tools
           </h1>
-          <p className="text-slate-400">
-            Enter each AI tool your team pays for. We&apos;ll calculate your
-            potential savings instantly.
+          <p className="text-slate-400 leading-relaxed">
+            Enter each AI tool your team pays for. Add all tools for the most
+            accurate savings analysis.
           </p>
         </div>
 
         {/* Summary bar */}
         {tools.length > 0 && (
-          <div className="mb-6 rounded-xl border border-white/10 bg-white/5 p-4 flex items-center justify-between gap-4 flex-wrap">
-            <div className="flex items-center gap-6">
-              <div>
-                <p className="text-xs text-slate-500">Tools added</p>
-                <p className="font-semibold text-white font-mono-numbers">{tools.length}</p>
-              </div>
-              <div>
-                <p className="text-xs text-slate-500">Monthly spend</p>
-                <p className="font-semibold text-white font-mono-numbers">${totalMonthlySpend.toFixed(0)}</p>
-              </div>
-              <div>
-                <p className="text-xs text-slate-500">Annual spend</p>
-                <p className="font-semibold text-white font-mono-numbers">${(totalMonthlySpend * 12).toFixed(0)}</p>
-              </div>
+          <div
+            className="mb-6 rounded-xl border border-white/10 bg-white/5 p-4 flex items-center justify-between gap-4 flex-wrap"
+            role="region"
+            aria-label="Audit summary"
+          >
+            <div className="flex items-center gap-6 flex-wrap">
+              {[
+                { label: "Tools", value: tools.length.toString() },
+                { label: "Total seats", value: totalSeats.toString() },
+                { label: "Monthly spend", value: formatCurrency(totalMonthlySpend) },
+                { label: "Annual spend", value: formatCurrency(totalMonthlySpend * 12) },
+              ].map(({ label, value }) => (
+                <div key={label}>
+                  <p className="text-xs text-slate-500">{label}</p>
+                  <p className="font-semibold text-white font-mono-numbers">{value}</p>
+                </div>
+              ))}
             </div>
-            <Button variant="ghost" size="sm" onClick={clearTools} className="text-slate-500">
+            <Button variant="ghost" size="sm" onClick={clearTools} className="text-slate-500 hover:text-red-400">
               Clear all
             </Button>
           </div>
         )}
 
         {/* Tool list */}
-        <div className="space-y-3 mb-4">
+        <div className="space-y-3 mb-4" role="list" aria-label="Added AI tools">
           {!isLoaded ? (
-            // Skeleton loading state
-            <div className="space-y-3" aria-label="Loading saved tools…">
+            <div className="space-y-3" aria-label="Loading saved tools">
               {[1, 2].map((i) => (
                 <div key={i} className="rounded-xl border border-white/10 p-4 flex gap-3 items-center">
                   <Skeleton className="h-8 w-8 rounded" />
@@ -370,12 +388,17 @@ export default function AuditPage() {
               ))}
             </div>
           ) : tools.length === 0 ? (
-            <div className="rounded-xl border border-dashed border-white/10 py-10 text-center" role="status" aria-live="polite">
-              <p className="text-slate-500 text-sm">No tools added yet.</p>
-              <p className="text-slate-600 text-xs mt-1">Add your first AI tool below ↓</p>
+            <div
+              className="rounded-xl border border-dashed border-white/10 py-12 text-center"
+              role="status"
+              aria-live="polite"
+            >
+              <p className="text-3xl mb-3" aria-hidden="true">🔍</p>
+              <p className="text-slate-400 text-sm font-medium">No tools added yet</p>
+              <p className="text-slate-600 text-xs mt-1">Add your first AI tool below to start the audit ↓</p>
             </div>
           ) : (
-            tools.map((tool, index) => (
+            tools.map((tool) => (
               <ToolCard
                 key={tool.id}
                 toolId={tool.id}
@@ -383,18 +406,22 @@ export default function AuditPage() {
                 plan={tool.plan}
                 monthlySpend={tool.monthlySpend}
                 seats={tool.seats}
+                teamSize={tool.teamSize}
                 useCase={tool.useCase}
                 onRemove={removeTool}
-                index={index}
               />
             ))
           )}
         </div>
 
         {/* Add tool form */}
-        <AddToolForm onAdd={(data) => addTool({ ...data, plan: data.plan as import("@/types/audit").AIPlan })} />
+        <AddToolForm
+          onAdd={(data) =>
+            addTool({ ...data, plan: data.plan as AIPlan })
+          }
+        />
 
-        {/* Run Audit CTA */}
+        {/* Run audit CTA */}
         {tools.length > 0 && (
           <div className="mt-8 space-y-3">
             <Button
@@ -404,12 +431,13 @@ export default function AuditPage() {
               loading={isRunning}
               disabled={isRunning}
               id="run-audit-btn"
+              aria-label={`Run audit on ${tools.length} tool${tools.length !== 1 ? "s" : ""}`}
             >
-              {isRunning ? "Analyzing your stack…" : "Run AI Spend Audit"}
+              {isRunning ? "Analyzing your AI stack…" : `Run Audit on ${tools.length} Tool${tools.length !== 1 ? "s" : ""}`}
               {!isRunning && <ArrowRight className="h-4 w-4" aria-hidden="true" />}
             </Button>
             <p className="text-center text-xs text-slate-600">
-              Results are instant and private — nothing leaves your browser.
+              All calculations are instant and private — nothing leaves your browser.
             </p>
           </div>
         )}

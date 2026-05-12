@@ -1,15 +1,16 @@
 /**
- * AI Spend Audit Engine — Rule-Based Optimization Logic
+ * AI Spend Audit Engine — Rule-Based Optimization Logic (Day 2)
  *
  * ARCHITECTURE DECISION:
- * This module uses purely rule-based logic (no AI/ML) for audit calculations.
- * This ensures:
- *  1. Deterministic, auditable results
- *  2. Zero external API dependency at MVP stage
- *  3. Easy to extend with new rules as we learn from user data
+ * Pure rule-based logic — no AI/ML, no external API calls.
+ * Deterministic, auditable, finance-grade recommendations.
  *
- * Each rule targets a specific (tool, plan, condition) combination and
- * returns a structured recommendation with accurate savings math.
+ * PRICING SOURCES: See PRICING_DATA.md for all verified pricing.
+ *
+ * Rule structure:
+ *   Each tool has its own audit function that receives an AuditToolEntry
+ *   and returns Partial<AuditRecommendation>. The main runAudit() orchestrator
+ *   fills in totals and defaults. This makes adding new rules trivial.
  */
 
 import {
@@ -19,55 +20,80 @@ import {
   AIPlan,
 } from "@/types/audit";
 
-// ─── Rule: ChatGPT ──────────────────────────────────────────────────────────
+// ─── Pricing constants (source: PRICING_DATA.md) ──────────────────────────
+
+const PRICING = {
+  chatgpt: { plus: 20, team: 25 },
+  claude: { pro: 20, team: 25 },
+  cursor: { hobby: 0, pro: 20, business: 40 },
+  githubCopilot: { individual: 10, business: 19, enterprise: 39 },
+  gemini: { advanced: 19.99, business: 24 },
+  windsurf: { free: 0, pro: 15, teams: 30 },
+} as const;
+
+// ─── Helper ───────────────────────────────────────────────────────────────
+
+function savings(current: number, optimized: number) {
+  return Math.max(0, current - optimized);
+}
+
+// ─── Rule: ChatGPT ────────────────────────────────────────────────────────
 
 /**
- * ChatGPT pricing reference (as of 2024):
- * - Plus: $20/user/month
- * - Team: $25/user/month (min 2 users)
- * - Enterprise: custom pricing
+ * ChatGPT pricing (verified 2025-05):
+ * - Plus:       $20/user/month  — individual subscription
+ * - Team:       $25/user/month  — min 2 users, shared workspace
+ * - Enterprise: custom          — SSO, advanced admin, data privacy
+ *
+ * Rules:
+ * 1. Team plan with ≤2 users → switch to Plus (saves Team overhead)
+ * 2. Enterprise with ≤5 users → downgrade to Team
+ * 3. Team plan but monthlySpend > standard rate → billing overage flag
  */
 function auditChatGPT(entry: AuditToolEntry): Partial<AuditRecommendation> {
   const { plan, seats, monthlySpend } = entry;
 
   if (plan === "Team" && seats <= 2) {
-    // Team plan with ≤2 users → switch to Plus ($20/user) = $40 total
-    const optimizedSpend = 20 * seats;
-    const savings = monthlySpend - optimizedSpend;
-    if (savings > 0) {
+    const optimized = PRICING.chatgpt.plus * seats;
+    const saved = savings(monthlySpend, optimized);
+    if (saved > 0) {
       return {
         recommendedPlan: "Plus",
-        optimizedMonthlySpend: optimizedSpend,
-        reason: `ChatGPT Team (≤2 users) costs more than 2× Plus plans. Switch to ChatGPT Plus at $20/user to save ${Math.round((savings / monthlySpend) * 100)}% monthly.`,
+        optimizedMonthlySpend: optimized,
+        reason: `With only ${seats} user${seats > 1 ? "s" : ""}, ChatGPT Team ($25/seat) costs more than individual Plus plans ($20/seat). Switching saves you $${saved}/month with no feature loss for small teams.`,
         priority: "high",
-      };
-    }
-  }
-
-  if (plan === "Team" && seats >= 3 && monthlySpend > 25 * seats) {
-    // Overpaying on Team — might have stale billing
-    const optimizedSpend = 25 * seats;
-    const savings = monthlySpend - optimizedSpend;
-    if (savings > 0) {
-      return {
-        recommendedPlan: "Team",
-        optimizedMonthlySpend: optimizedSpend,
-        reason: `Your ChatGPT Team billing appears higher than standard $25/seat/month. Review your billing cycle for potential overages.`,
-        priority: "medium",
+        confidenceScore: 95,
+        actionLabel: "Switch to ChatGPT Plus",
       };
     }
   }
 
   if (plan === "Enterprise" && seats <= 5) {
-    // Enterprise with very few users is almost always over-scoped
-    const optimizedSpend = 25 * seats; // recommend Team
-    const savings = monthlySpend - optimizedSpend;
-    if (savings > 0) {
+    const optimized = PRICING.chatgpt.team * seats;
+    const saved = savings(monthlySpend, optimized);
+    if (saved > 0) {
       return {
         recommendedPlan: "Team",
-        optimizedMonthlySpend: optimizedSpend,
-        reason: `ChatGPT Enterprise with only ${seats} users is over-scoped. ChatGPT Team offers the same collaboration features at $25/seat.`,
+        optimizedMonthlySpend: optimized,
+        reason: `ChatGPT Enterprise is designed for large orgs with compliance needs. With ${seats} users, Team plan at $25/seat provides equivalent collaboration features and saves you $${saved}/month.`,
         priority: "high",
+        confidenceScore: 88,
+        actionLabel: "Downgrade to ChatGPT Team",
+      };
+    }
+  }
+
+  if (plan === "Team" && seats >= 3 && monthlySpend > PRICING.chatgpt.team * seats * 1.05) {
+    const optimized = PRICING.chatgpt.team * seats;
+    const saved = savings(monthlySpend, optimized);
+    if (saved > 0) {
+      return {
+        recommendedPlan: "Team",
+        optimizedMonthlySpend: optimized,
+        reason: `Your ChatGPT Team billing ($${monthlySpend}/mo) is higher than the standard $${PRICING.chatgpt.team}/seat rate. You may have unused seats or billing overages. Review your workspace members.`,
+        priority: "medium",
+        confidenceScore: 70,
+        actionLabel: "Audit billing seats",
       };
     }
   }
@@ -75,38 +101,63 @@ function auditChatGPT(entry: AuditToolEntry): Partial<AuditRecommendation> {
   return {};
 }
 
-// ─── Rule: Claude ────────────────────────────────────────────────────────────
+// ─── Rule: Claude ─────────────────────────────────────────────────────────
 
 /**
- * Claude pricing reference (as of 2024):
- * - Pro: $20/user/month
- * - Team: $25/user/month (min 5 users)
+ * Claude pricing (verified 2025-05):
+ * - Pro:        $20/user/month
+ * - Team:       $25/user/month  — min 5 users, admin console
+ * - Enterprise: custom
+ *
+ * Rules:
+ * 1. Team with ≤3 users → individual Pro plans are cheaper
+ * 2. Enterprise with ≤10 users → Team is sufficient
+ * 3. Team for "writing" use case with 1 user → Pro suffices
  */
 function auditClaude(entry: AuditToolEntry): Partial<AuditRecommendation> {
-  const { plan, seats, monthlySpend } = entry;
+  const { plan, seats, monthlySpend, useCase } = entry;
 
   if (plan === "Team" && seats <= 3) {
-    const optimizedSpend = 20 * seats;
-    const savings = monthlySpend - optimizedSpend;
-    if (savings > 0) {
+    const optimized = PRICING.claude.pro * seats;
+    const saved = savings(monthlySpend, optimized);
+    if (saved > 0) {
       return {
         recommendedPlan: "Pro",
-        optimizedMonthlySpend: optimizedSpend,
-        reason: `Claude Team (≤3 users) costs more than individual Pro plans. Switch each user to Claude Pro at $20/user to save $${savings}/month.`,
+        optimizedMonthlySpend: optimized,
+        reason: `Claude Team requires a minimum of 5 users to make economic sense. With ${seats} user${seats > 1 ? "s" : ""}, individual Pro plans at $20/user save you $${saved}/month and offer the same model access.`,
         priority: "high",
+        confidenceScore: 92,
+        actionLabel: "Switch to Claude Pro",
+      };
+    }
+  }
+
+  if (plan === "Team" && seats === 1 && useCase === "writing") {
+    const optimized = PRICING.claude.pro;
+    const saved = savings(monthlySpend, optimized);
+    if (saved > 0) {
+      return {
+        recommendedPlan: "Pro",
+        optimizedMonthlySpend: optimized,
+        reason: `For solo writing use cases, Claude Pro ($20/month) provides full model access without the Team plan overhead. Save $${saved}/month immediately.`,
+        priority: "high",
+        confidenceScore: 95,
+        actionLabel: "Downgrade to Claude Pro",
       };
     }
   }
 
   if (plan === "Enterprise" && seats <= 10) {
-    const optimizedSpend = 25 * seats;
-    const savings = monthlySpend - optimizedSpend;
-    if (savings > 0) {
+    const optimized = PRICING.claude.team * seats;
+    const saved = savings(monthlySpend, optimized);
+    if (saved > 0) {
       return {
         recommendedPlan: "Team",
-        optimizedMonthlySpend: optimizedSpend,
-        reason: `Claude Enterprise with a small team (${seats} users) may not justify the premium. Claude Team at $25/user provides similar collaborative features.`,
+        optimizedMonthlySpend: optimized,
+        reason: `Claude Enterprise is built for large compliance-heavy organizations. With ${seats} users, Team at $25/user provides centralized billing and admin tools at a fraction of Enterprise pricing.`,
         priority: "medium",
+        confidenceScore: 80,
+        actionLabel: "Evaluate Claude Team",
       };
     }
   }
@@ -114,38 +165,63 @@ function auditClaude(entry: AuditToolEntry): Partial<AuditRecommendation> {
   return {};
 }
 
-// ─── Rule: Cursor ─────────────────────────────────────────────────────────────
+// ─── Rule: Cursor ─────────────────────────────────────────────────────────
 
 /**
- * Cursor pricing reference (as of 2024):
- * - Pro: $20/user/month
- * - Business: $40/user/month
+ * Cursor pricing (verified 2025-05):
+ * - Hobby:    $0/month   — limited completions
+ * - Pro:      $20/user/month — unlimited completions, GPT-4
+ * - Business: $40/user/month — SSO, centralized billing, usage analytics
+ *
+ * Rules:
+ * 1. Business with ≤3 users → Pro is identical in AI features
+ * 2. Business plan, solo developer → Cursor Pro at half the price
+ * 3. Business with billing overage → flag unused seats
  */
 function auditCursor(entry: AuditToolEntry): Partial<AuditRecommendation> {
   const { plan, seats, monthlySpend } = entry;
 
-  if (plan === "Business" && seats <= 3) {
-    const optimizedSpend = 20 * seats;
-    const savings = monthlySpend - optimizedSpend;
-    if (savings > 0) {
+  if (plan === "Business" && seats === 1) {
+    const optimized = PRICING.cursor.pro;
+    const saved = savings(monthlySpend, optimized);
+    if (saved > 0) {
       return {
         recommendedPlan: "Pro",
-        optimizedMonthlySpend: optimizedSpend,
-        reason: `Cursor Business (≤3 users) doubles the cost of Pro with minimal extra features at this team size. Switch to Cursor Pro to cut spending by 50%.`,
+        optimizedMonthlySpend: optimized,
+        reason: `Cursor Business adds SSO and centralized billing — features irrelevant for a solo developer. Cursor Pro at $20/month provides identical AI completions and saves you $${saved}/month.`,
         priority: "high",
+        confidenceScore: 98,
+        actionLabel: "Switch to Cursor Pro",
       };
     }
   }
 
-  if (plan === "Business" && seats <= 8 && monthlySpend > 40 * seats) {
-    const optimizedSpend = 40 * seats;
-    const savings = monthlySpend - optimizedSpend;
-    if (savings > 0) {
+  if (plan === "Business" && seats <= 3) {
+    const optimized = PRICING.cursor.pro * seats;
+    const saved = savings(monthlySpend, optimized);
+    if (saved > 0) {
+      return {
+        recommendedPlan: "Pro",
+        optimizedMonthlySpend: optimized,
+        reason: `Cursor Business (${seats} users) costs $${PRICING.cursor.business}/seat vs $${PRICING.cursor.pro} for Pro — the only Business extras are SSO and admin analytics, which small teams rarely need. Switch to Pro and save $${saved}/month.`,
+        priority: "high",
+        confidenceScore: 90,
+        actionLabel: "Switch to Cursor Pro",
+      };
+    }
+  }
+
+  if (plan === "Business" && monthlySpend > PRICING.cursor.business * seats * 1.05) {
+    const optimized = PRICING.cursor.business * seats;
+    const saved = savings(monthlySpend, optimized);
+    if (saved > 0) {
       return {
         recommendedPlan: "Business",
-        optimizedMonthlySpend: optimizedSpend,
-        reason: `Your Cursor Business plan seems to have billing overages beyond $40/seat. Audit your billing for unused seats.`,
+        optimizedMonthlySpend: optimized,
+        reason: `Your Cursor Business spend ($${monthlySpend}/mo) is above the standard $${PRICING.cursor.business}/seat rate for ${seats} seats. Check for inactive accounts or legacy billing.`,
         priority: "medium",
+        confidenceScore: 65,
+        actionLabel: "Audit Cursor seats",
       };
     }
   }
@@ -153,39 +229,63 @@ function auditCursor(entry: AuditToolEntry): Partial<AuditRecommendation> {
   return {};
 }
 
-// ─── Rule: GitHub Copilot ─────────────────────────────────────────────────────
+// ─── Rule: GitHub Copilot ─────────────────────────────────────────────────
 
 /**
- * GitHub Copilot pricing reference (as of 2024):
+ * GitHub Copilot pricing (verified 2025-05):
  * - Individual: $10/user/month
- * - Business: $19/user/month
- * - Enterprise: $39/user/month
+ * - Business:   $19/user/month — centralized policy, audit logs
+ * - Enterprise: $39/user/month — custom model fine-tuning, Copilot Chat for Enterprise
+ *
+ * Rules:
+ * 1. Business with ≤2 users → Individual plans save ~50%
+ * 2. Enterprise with ≤5 users → Business covers all practical needs
+ * 3. Business plan for coding-only, 1 user → Individual
  */
 function auditGitHubCopilot(entry: AuditToolEntry): Partial<AuditRecommendation> {
-  const { plan, seats, monthlySpend } = entry;
+  const { plan, seats, monthlySpend, useCase } = entry;
 
   if (plan === "Business" && seats <= 2) {
-    const optimizedSpend = 10 * seats;
-    const savings = monthlySpend - optimizedSpend;
-    if (savings > 0) {
+    const optimized = PRICING.githubCopilot.individual * seats;
+    const saved = savings(monthlySpend, optimized);
+    if (saved > 0) {
       return {
         recommendedPlan: "Individual",
-        optimizedMonthlySpend: optimizedSpend,
-        reason: `GitHub Copilot Business (≤2 users) costs nearly 2× Individual plans without meaningful additional value for tiny teams.`,
+        optimizedMonthlySpend: optimized,
+        reason: `GitHub Copilot Business at $19/user adds team policy management for ${seats} user${seats > 1 ? "s" : ""}. Individual plans ($10/user) provide the same AI suggestions for small teams and save $${saved}/month.`,
         priority: "medium",
+        confidenceScore: 85,
+        actionLabel: "Switch to Individual plan",
       };
     }
   }
 
   if (plan === "Enterprise" && seats <= 5) {
-    const optimizedSpend = 19 * seats;
-    const savings = monthlySpend - optimizedSpend;
-    if (savings > 0) {
+    const optimized = PRICING.githubCopilot.business * seats;
+    const saved = savings(monthlySpend, optimized);
+    if (saved > 0) {
       return {
         recommendedPlan: "Business",
-        optimizedMonthlySpend: optimizedSpend,
-        reason: `GitHub Copilot Enterprise (≤5 users) at $39/seat has expensive compliance features most small teams don't need. Business plan at $19/seat covers most use cases.`,
+        optimizedMonthlySpend: optimized,
+        reason: `GitHub Copilot Enterprise ($39/user) is designed for organizations needing custom model fine-tuning and enterprise Copilot Chat. With only ${seats} users, Business plan at $19/user is more appropriate and saves $${saved}/month.`,
         priority: "high",
+        confidenceScore: 87,
+        actionLabel: "Downgrade to Business plan",
+      };
+    }
+  }
+
+  if (plan === "Business" && seats === 1 && useCase === "coding") {
+    const optimized = PRICING.githubCopilot.individual;
+    const saved = savings(monthlySpend, optimized);
+    if (saved > 0) {
+      return {
+        recommendedPlan: "Individual",
+        optimizedMonthlySpend: optimized,
+        reason: `A solo developer on GitHub Copilot Business is paying $9/month extra for team management features they cannot use alone. Switch to Individual and save $${saved}/month.`,
+        priority: "medium",
+        confidenceScore: 95,
+        actionLabel: "Switch to Individual",
       };
     }
   }
@@ -193,38 +293,47 @@ function auditGitHubCopilot(entry: AuditToolEntry): Partial<AuditRecommendation>
   return {};
 }
 
-// ─── Rule: Gemini ─────────────────────────────────────────────────────────────
+// ─── Rule: Gemini ─────────────────────────────────────────────────────────
 
 /**
- * Gemini pricing reference (as of 2024):
- * - Advanced: ~$19.99/user/month (Google One AI Premium)
- * - Business: $24/user/month (Workspace add-on)
+ * Gemini pricing (verified 2025-05):
+ * - Advanced:   $19.99/user/month (Google One AI Premium)
+ * - Business:   $24/user/month   (Gemini for Google Workspace)
+ * - Enterprise: custom
+ *
+ * Rules:
+ * 1. Business with ≤3 users → Advanced individual plans are cheaper
+ * 2. Enterprise with ≤10 users → Business covers most use cases
  */
 function auditGemini(entry: AuditToolEntry): Partial<AuditRecommendation> {
   const { plan, seats, monthlySpend } = entry;
 
   if (plan === "Business" && seats <= 3) {
-    const optimizedSpend = 20 * seats;
-    const savings = monthlySpend - optimizedSpend;
-    if (savings > 0) {
+    const optimized = PRICING.gemini.advanced * seats;
+    const saved = savings(monthlySpend, optimized);
+    if (saved > 0) {
       return {
         recommendedPlan: "Advanced",
-        optimizedMonthlySpend: optimizedSpend,
-        reason: `Gemini Business (≤3 users) is more expensive than individual Advanced plans without the workspace compliance requirements that justify it.`,
+        optimizedMonthlySpend: Math.round(optimized),
+        reason: `Gemini Business ($24/user) adds Workspace integration extras that ${seats} user${seats > 1 ? "s" : ""} may not need. Individual Advanced plans at ~$20/user offer the same Gemini 1.5 Pro access and save ~$${Math.round(saved)}/month.`,
         priority: "medium",
+        confidenceScore: 72,
+        actionLabel: "Evaluate Gemini Advanced",
       };
     }
   }
 
   if (plan === "Enterprise" && seats <= 10) {
-    const optimizedSpend = 24 * seats;
-    const savings = monthlySpend - optimizedSpend;
-    if (savings > 0) {
+    const optimized = PRICING.gemini.business * seats;
+    const saved = savings(monthlySpend, optimized);
+    if (saved > 0) {
       return {
         recommendedPlan: "Business",
-        optimizedMonthlySpend: optimizedSpend,
-        reason: `Gemini Enterprise (${seats} users) may be over-scoped. Business plan at $24/user provides strong team features without enterprise compliance overhead.`,
+        optimizedMonthlySpend: optimized,
+        reason: `Gemini Enterprise pricing is typically 30–50% above Business for compliance and DLP features. With ${seats} users, Business plan provides team admin and audit features sufficient for most startups.`,
         priority: "medium",
+        confidenceScore: 65,
+        actionLabel: "Review Gemini Enterprise need",
       };
     }
   }
@@ -232,78 +341,188 @@ function auditGemini(entry: AuditToolEntry): Partial<AuditRecommendation> {
   return {};
 }
 
-// ─── Rule: OpenAI API ─────────────────────────────────────────────────────────
+// ─── Rule: OpenAI API ─────────────────────────────────────────────────────
 
 /**
- * OpenAI API optimization: Look for over-spending patterns.
- * For API usage, the main optimization is model selection and caching.
+ * OpenAI API pricing (verified 2025-05, pay-as-you-go):
+ * - No fixed subscription; purely usage-based.
+ * - Optimization: model selection, caching, batching.
+ *
+ * Rules:
+ * 1. Spend ≥$200 for writing/data → switch to GPT-4o-mini saves ~40%
+ * 2. Spend ≥$500 → committed use discount + batching saves 25%
+ * 3. Spend ≥$1000 → dedicated capacity discount available
  */
 function auditOpenAIAPI(entry: AuditToolEntry): Partial<AuditRecommendation> {
   const { monthlySpend, useCase } = entry;
 
-  // High API spend → recommend GPT-3.5 for appropriate use cases
-  if (monthlySpend >= 200 && (useCase === "Writing" || useCase === "Customer Support")) {
-    const optimizedSpend = Math.round(monthlySpend * 0.6); // ~40% savings switching to cheaper models
+  if (monthlySpend >= 1000) {
+    const optimized = Math.round(monthlySpend * 0.65);
     return {
-      recommendedPlan: "Pay-as-you-go",
-      optimizedMonthlySpend: optimizedSpend,
-      reason: `For ${useCase} workloads, switching from GPT-4 to GPT-3.5-turbo or GPT-4o-mini for non-critical tasks can reduce API costs by ~40%. Implement response caching for repeated queries.`,
+      recommendedPlan: "Committed Use",
+      optimizedMonthlySpend: optimized,
+      reason: `At $${monthlySpend}/month, you qualify for OpenAI's committed-use discounts (up to 25% off) and should explore dedicated capacity. Additionally, switching non-critical tasks to gpt-4o-mini saves ~35% more.`,
       priority: "high",
+      confidenceScore: 82,
+      actionLabel: "Negotiate committed use",
     };
   }
 
   if (monthlySpend >= 500) {
-    const optimizedSpend = Math.round(monthlySpend * 0.75); // 25% via caching + batching
+    const optimized = Math.round(monthlySpend * 0.75);
     return {
       recommendedPlan: "Committed Use",
-      optimizedMonthlySpend: optimizedSpend,
-      reason: `At $${monthlySpend}/month OpenAI API spend, you qualify for committed use discounts. Batching non-realtime requests and adding semantic caching can save 25–40%.`,
+      optimizedMonthlySpend: optimized,
+      reason: `OpenAI committed-use discounts and batching non-realtime requests can reduce your $${monthlySpend}/month API bill by ~25%. Implement semantic caching with a vector DB to eliminate repeated LLM calls.`,
       priority: "high",
+      confidenceScore: 78,
+      actionLabel: "Enable batching + caching",
+    };
+  }
+
+  if (monthlySpend >= 200 && (useCase === "writing" || useCase === "data")) {
+    const optimized = Math.round(monthlySpend * 0.6);
+    return {
+      recommendedPlan: "Pay-as-you-go",
+      optimizedMonthlySpend: optimized,
+      reason: `For ${useCase} tasks, gpt-4o-mini ($0.15/1M input tokens) vs gpt-4o ($2.50/1M) is often indistinguishable in quality. Routing 80% of requests to the cheaper model can cut your API bill by ~40%.`,
+      priority: "high",
+      confidenceScore: 80,
+      actionLabel: "Route to gpt-4o-mini",
+    };
+  }
+
+  if (monthlySpend >= 50) {
+    return {
+      recommendedPlan: "Pay-as-you-go",
+      optimizedMonthlySpend: Math.round(monthlySpend * 0.85),
+      reason: `Add response caching for repeated queries (e.g. Redis + embeddings similarity) to cut redundant API calls. At your usage level, this typically saves 10–15% monthly with minimal engineering effort.`,
+      priority: "low",
+      confidenceScore: 60,
+      actionLabel: "Add response caching",
     };
   }
 
   return {};
 }
 
-// ─── Main Audit Engine ────────────────────────────────────────────────────────
+// ─── Rule: Anthropic API ──────────────────────────────────────────────────
+
+/**
+ * Anthropic API pricing (verified 2025-05):
+ * - Claude 3.5 Sonnet: $3/1M input, $15/1M output (pay-as-you-go)
+ * - Claude 3 Haiku:    $0.25/1M input, $1.25/1M output
+ *
+ * Rules:
+ * 1. High spend for writing/data → route to Haiku for non-critical tasks
+ * 2. Very high spend → Anthropic enterprise agreement available
+ */
+function auditAnthropicAPI(entry: AuditToolEntry): Partial<AuditRecommendation> {
+  const { monthlySpend, useCase } = entry;
+
+  if (monthlySpend >= 500) {
+    const optimized = Math.round(monthlySpend * 0.7);
+    return {
+      recommendedPlan: "Committed Use",
+      optimizedMonthlySpend: optimized,
+      reason: `At $${monthlySpend}/month, contact Anthropic for volume pricing. Additionally, routing classification, extraction, and simple generation tasks to Claude 3 Haiku (12× cheaper than Sonnet) can reduce costs by 30%.`,
+      priority: "high",
+      confidenceScore: 80,
+      actionLabel: "Route to Claude Haiku",
+    };
+  }
+
+  if (monthlySpend >= 100 && (useCase === "writing" || useCase === "data")) {
+    const optimized = Math.round(monthlySpend * 0.65);
+    return {
+      recommendedPlan: "Pay-as-you-go",
+      optimizedMonthlySpend: optimized,
+      reason: `Claude 3 Haiku is 12× cheaper than Sonnet and handles ${useCase} tasks with near-identical output quality. Routing non-critical requests to Haiku typically saves 35%+ with minimal prompt changes.`,
+      priority: "medium",
+      confidenceScore: 78,
+      actionLabel: "Switch to Claude Haiku",
+    };
+  }
+
+  return {};
+}
+
+// ─── Rule: Windsurf ───────────────────────────────────────────────────────
+
+/**
+ * Windsurf pricing (verified 2025-05):
+ * - Free:  $0/month — limited flows
+ * - Pro:   $15/user/month — unlimited flows
+ * - Teams: $30/user/month — centralized billing, admin
+ *
+ * Rules:
+ * 1. Teams with ≤2 users → Pro plans are cheaper
+ * 2. Teams + overlap with Cursor/Copilot → flag redundancy
+ */
+function auditWindsurf(entry: AuditToolEntry): Partial<AuditRecommendation> {
+  const { plan, seats, monthlySpend } = entry;
+
+  if (plan === "Teams" && seats <= 2) {
+    const optimized = PRICING.windsurf.pro * seats;
+    const saved = savings(monthlySpend, optimized);
+    if (saved > 0) {
+      return {
+        recommendedPlan: "Pro",
+        optimizedMonthlySpend: optimized,
+        reason: `Windsurf Teams ($30/user) adds admin controls designed for larger teams. With ${seats} user${seats > 1 ? "s" : ""}, individual Pro plans at $15/user deliver the same AI flow features and save $${saved}/month.`,
+        priority: "high",
+        confidenceScore: 90,
+        actionLabel: "Switch to Windsurf Pro",
+      };
+    }
+  }
+
+  if (plan === "Teams" && monthlySpend > PRICING.windsurf.teams * seats * 1.05) {
+    const optimized = PRICING.windsurf.teams * seats;
+    const saved = savings(monthlySpend, optimized);
+    if (saved > 0) {
+      return {
+        recommendedPlan: "Teams",
+        optimizedMonthlySpend: optimized,
+        reason: `Your Windsurf Teams billing exceeds the standard $${PRICING.windsurf.teams}/user rate. Check for inactive accounts — you may be paying for seats that aren't being used.`,
+        priority: "medium",
+        confidenceScore: 65,
+        actionLabel: "Audit Windsurf seats",
+      };
+    }
+  }
+
+  return {};
+}
+
+// ─── Main Audit Engine ────────────────────────────────────────────────────
 
 /**
  * Run the full audit on a list of tool entries.
- * Returns a structured AuditResult with per-tool recommendations and totals.
+ * Pure function — no side effects, no network calls, fully testable.
  */
 export function runAudit(entries: AuditToolEntry[]): AuditResult {
   const recommendations: AuditRecommendation[] = entries.map((entry) => {
-    // Dispatch to the correct rule function
     let ruleResult: Partial<AuditRecommendation> = {};
 
     switch (entry.tool) {
-      case "ChatGPT":
-        ruleResult = auditChatGPT(entry);
-        break;
-      case "Claude":
-        ruleResult = auditClaude(entry);
-        break;
-      case "Cursor":
-        ruleResult = auditCursor(entry);
-        break;
-      case "GitHub Copilot":
-        ruleResult = auditGitHubCopilot(entry);
-        break;
-      case "Gemini":
-        ruleResult = auditGemini(entry);
-        break;
-      case "OpenAI API":
-        ruleResult = auditOpenAIAPI(entry);
-        break;
+      case "ChatGPT":       ruleResult = auditChatGPT(entry);       break;
+      case "Claude":        ruleResult = auditClaude(entry);        break;
+      case "Cursor":        ruleResult = auditCursor(entry);        break;
+      case "GitHub Copilot": ruleResult = auditGitHubCopilot(entry); break;
+      case "Gemini":        ruleResult = auditGemini(entry);        break;
+      case "OpenAI API":    ruleResult = auditOpenAIAPI(entry);     break;
+      case "Anthropic API": ruleResult = auditAnthropicAPI(entry);  break;
+      case "Windsurf":      ruleResult = auditWindsurf(entry);      break;
     }
 
     const currentMonthlySpend = entry.monthlySpend;
-    const optimizedMonthlySpend =
-      ruleResult.optimizedMonthlySpend ?? currentMonthlySpend;
+    const optimizedMonthlySpend = ruleResult.optimizedMonthlySpend ?? currentMonthlySpend;
     const monthlySavings = Math.max(0, currentMonthlySpend - optimizedMonthlySpend);
     const yearlySavings = monthlySavings * 12;
-    const savingsPercent =
-      currentMonthlySpend > 0 ? (monthlySavings / currentMonthlySpend) * 100 : 0;
+    const savingsPercent = currentMonthlySpend > 0
+      ? (monthlySavings / currentMonthlySpend) * 100
+      : 0;
 
     return {
       toolId: entry.id,
@@ -314,26 +533,22 @@ export function runAudit(entries: AuditToolEntry[]): AuditResult {
       optimizedMonthlySpend,
       monthlySavings,
       yearlySavings,
-      reason:
-        ruleResult.reason ??
-        `Your ${entry.tool} ${entry.plan} plan appears optimally configured for your current usage.`,
+      reason: ruleResult.reason ??
+        `Your ${entry.tool} ${entry.plan} plan is appropriately sized for your team and usage pattern.`,
       savingsPercent,
       priority: ruleResult.priority ?? "none",
+      confidenceScore: ruleResult.confidenceScore ?? 100,
+      actionLabel: ruleResult.actionLabel ?? "No action needed",
     };
   });
 
-  const totalMonthlySpend = recommendations.reduce(
-    (sum, r) => sum + r.currentMonthlySpend,
-    0
-  );
-  const totalOptimizedMonthlySpend = recommendations.reduce(
-    (sum, r) => sum + r.optimizedMonthlySpend,
-    0
-  );
+  const totalMonthlySpend = recommendations.reduce((s, r) => s + r.currentMonthlySpend, 0);
+  const totalOptimizedMonthlySpend = recommendations.reduce((s, r) => s + r.optimizedMonthlySpend, 0);
   const totalMonthlySavings = Math.max(0, totalMonthlySpend - totalOptimizedMonthlySpend);
   const totalYearlySavings = totalMonthlySavings * 12;
-  const overallSavingsPercent =
-    totalMonthlySpend > 0 ? (totalMonthlySavings / totalMonthlySpend) * 100 : 0;
+  const overallSavingsPercent = totalMonthlySpend > 0
+    ? (totalMonthlySavings / totalMonthlySpend) * 100
+    : 0;
 
   return {
     recommendations,
@@ -346,58 +561,36 @@ export function runAudit(entries: AuditToolEntry[]): AuditResult {
   };
 }
 
-/**
- * Get the priority color class for a recommendation.
- * Used in UI components for visual priority indication.
- */
+// ─── UI Helpers ───────────────────────────────────────────────────────────
+
 export function getPriorityColor(priority: AuditRecommendation["priority"]): string {
   switch (priority) {
-    case "high":
-      return "text-red-400";
-    case "medium":
-      return "text-yellow-400";
-    case "low":
-      return "text-blue-400";
-    default:
-      return "text-emerald-400";
+    case "high":   return "text-red-400";
+    case "medium": return "text-yellow-400";
+    case "low":    return "text-blue-400";
+    default:       return "text-emerald-400";
   }
 }
 
-/**
- * Get the priority label for display.
- */
 export function getPriorityLabel(priority: AuditRecommendation["priority"]): string {
   switch (priority) {
-    case "high":
-      return "High Impact";
-    case "medium":
-      return "Medium Impact";
-    case "low":
-      return "Low Impact";
-    default:
-      return "Optimized";
+    case "high":   return "High Impact";
+    case "medium": return "Medium Impact";
+    case "low":    return "Low Impact";
+    default:       return "Optimized";
   }
 }
 
-/**
- * Get plan options for a given AI tool.
- * Used to populate the plan dropdown in the audit form.
- */
 export function getPlansForTool(tool: string): AIPlan[] {
   switch (tool) {
-    case "ChatGPT":
-      return ["Free", "Plus", "Team", "Enterprise"];
-    case "Claude":
-      return ["Free", "Pro", "Team", "Enterprise"];
-    case "Cursor":
-      return ["Hobby", "Pro", "Business"];
-    case "GitHub Copilot":
-      return ["Individual", "Business", "Enterprise"];
-    case "Gemini":
-      return ["Free", "Advanced", "Business", "Enterprise"];
-    case "OpenAI API":
-      return ["Pay-as-you-go", "Committed Use"];
-    default:
-      return [];
+    case "ChatGPT":       return ["Free", "Plus", "Team", "Enterprise"];
+    case "Claude":        return ["Free", "Pro", "Team", "Enterprise"];
+    case "Cursor":        return ["Hobby", "Pro", "Business"];
+    case "GitHub Copilot": return ["Individual", "Business", "Enterprise"];
+    case "Gemini":        return ["Free", "Advanced", "Business", "Enterprise"];
+    case "OpenAI API":    return ["Pay-as-you-go", "Committed Use"];
+    case "Anthropic API": return ["Pay-as-you-go", "Committed Use"];
+    case "Windsurf":      return ["Free", "Pro", "Teams"];
+    default:              return [];
   }
 }

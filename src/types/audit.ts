@@ -1,16 +1,18 @@
 /**
- * Core TypeScript type definitions for AI Spend Audit.
- * These types are shared across the entire application.
+ * Core TypeScript type definitions for AI Spend Audit — Day 2.
+ * Extended with new tools (Windsurf, Anthropic API) and richer recommendation shape.
  */
 
-// --- Supported AI Tools ---
+// --- Supported AI Tools (expanded from Day 1) ---
 export type AITool =
   | "ChatGPT"
   | "Claude"
   | "Cursor"
   | "GitHub Copilot"
   | "Gemini"
-  | "OpenAI API";
+  | "OpenAI API"
+  | "Anthropic API"
+  | "Windsurf";
 
 // --- Plan options per tool ---
 export type ChatGPTPlan = "Free" | "Plus" | "Team" | "Enterprise";
@@ -19,6 +21,8 @@ export type CursorPlan = "Hobby" | "Pro" | "Business";
 export type GitHubCopilotPlan = "Individual" | "Business" | "Enterprise";
 export type GeminiPlan = "Free" | "Advanced" | "Business" | "Enterprise";
 export type OpenAIAPIPlan = "Pay-as-you-go" | "Committed Use";
+export type AnthropicAPIPlan = "Pay-as-you-go" | "Committed Use";
+export type WindsurfPlan = "Free" | "Pro" | "Teams";
 
 export type AIPlan =
   | ChatGPTPlan
@@ -26,25 +30,26 @@ export type AIPlan =
   | CursorPlan
   | GitHubCopilotPlan
   | GeminiPlan
-  | OpenAIAPIPlan;
+  | OpenAIAPIPlan
+  | AnthropicAPIPlan
+  | WindsurfPlan;
 
-// --- Use cases ---
+// --- Primary use cases ---
 export type UseCase =
-  | "Coding"
-  | "Writing"
-  | "Research"
-  | "Customer Support"
-  | "Data Analysis"
-  | "General Productivity"
-  | "Other";
+  | "coding"
+  | "writing"
+  | "research"
+  | "data"
+  | "mixed";
 
 // --- A single tool entry in the audit form ---
 export interface AuditToolEntry {
-  id: string; // uuid for React key
+  id: string;
   tool: AITool;
   plan: AIPlan;
   monthlySpend: number;
   seats: number;
+  teamSize: number;
   useCase: UseCase;
 }
 
@@ -61,6 +66,10 @@ export interface AuditRecommendation {
   reason: string;
   savingsPercent: number;
   priority: "high" | "medium" | "low" | "none";
+  /** 0–100 confidence in the recommendation */
+  confidenceScore: number;
+  /** Short action label for the UI */
+  actionLabel: string;
 }
 
 // --- Full audit result ---
@@ -74,11 +83,19 @@ export interface AuditResult {
   generatedAt: string; // ISO timestamp
 }
 
-// --- Form data shape matching AuditToolEntry without id ---
+// --- AI-generated summary ---
+export interface AuditSummary {
+  text: string;
+  generatedByAI: boolean;
+  model?: string;
+}
+
+// --- Form data shape used in the audit form ---
 export interface ToolFormData {
   tool: AITool;
   plan: AIPlan;
   monthlySpend: number;
   seats: number;
+  teamSize: number;
   useCase: UseCase;
 }

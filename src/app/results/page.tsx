@@ -1,60 +1,60 @@
 "use client";
 
-import { useMemo, useEffect, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import Link from "next/link";
 import {
-  TrendingDown,
-  ArrowRight,
-  CheckCircle2,
-  AlertTriangle,
-  XCircle,
-  Sparkles,
-  RotateCcw,
-  Download,
-  ArrowLeft,
-  Trophy,
+  TrendingDown, ArrowRight, CheckCircle2, AlertTriangle,
+  XCircle, Sparkles, RotateCcw, ArrowLeft, Trophy, Zap,
 } from "lucide-react";
+import {
+  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell,
+} from "recharts";
 import { Button } from "@/components/ui/Button";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/Card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { SkeletonCard } from "@/components/ui/Skeleton";
 import { useAuditStore } from "@/hooks/useAuditStore";
 import { runAudit, getPriorityLabel, getPriorityColor } from "@/lib/auditEngine";
+import { generateAuditSummary } from "@/lib/generateSummary";
 import { AuditResult, AuditRecommendation } from "@/types/audit";
 import { formatCurrency, formatPercent, cn } from "@/lib/utils";
 
-// ─── Saving Metric Card ───────────────────────────────────────────────────
-
-interface MetricCardProps {
-  label: string;
-  value: string;
-  subtext?: string;
-  highlight?: boolean;
-  icon?: React.ReactNode;
+// ─── Animated Counter ─────────────────────────────────────────────────────
+function AnimatedCounter({ value, prefix = "", suffix = "", duration = 1200 }: {
+  value: number; prefix?: string; suffix?: string; duration?: number;
+}) {
+  const [display, setDisplay] = useState(0);
+  useEffect(() => {
+    if (value === 0) { setDisplay(0); return; }
+    const start = Date.now();
+    const tick = () => {
+      const elapsed = Date.now() - start;
+      const progress = Math.min(elapsed / duration, 1);
+      const eased = 1 - Math.pow(1 - progress, 3);
+      setDisplay(Math.round(value * eased));
+      if (progress < 1) requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  }, [value, duration]);
+  return <span className="font-mono-numbers">{prefix}{display.toLocaleString()}{suffix}</span>;
 }
 
-function MetricCard({ label, value, subtext, highlight, icon }: MetricCardProps) {
+// ─── Metric Card ─────────────────────────────────────────────────────────
+function MetricCard({ label, value, subtext, highlight, icon, animate }: {
+  label: string; value: string; subtext?: string;
+  highlight?: boolean; icon?: React.ReactNode; animate?: number;
+}) {
   return (
-    <Card
-      className={cn(
-        "transition-all duration-300",
-        highlight && "border-violet-500/40 bg-gradient-to-br from-violet-500/10 to-indigo-500/5"
-      )}
-    >
-      <CardContent className="p-6">
-        {icon && (
-          <div className="mb-3 inline-flex h-10 w-10 items-center justify-center rounded-xl bg-white/5">
-            {icon}
-          </div>
-        )}
-        <p className="text-sm text-slate-400 mb-1">{label}</p>
-        <p
-          className={cn(
-            "text-3xl font-bold font-mono-numbers",
-            highlight ? "gradient-text" : "text-white"
-          )}
-        >
-          {value}
+    <Card className={cn("transition-all duration-300",
+      highlight && "border-violet-500/40 bg-gradient-to-br from-violet-500/10 to-indigo-500/5"
+    )}>
+      <CardContent className="p-5">
+        {icon && <div className="mb-3 inline-flex h-9 w-9 items-center justify-center rounded-xl bg-white/5">{icon}</div>}
+        <p className="text-xs text-slate-400 mb-1">{label}</p>
+        <p className={cn("text-2xl font-bold", highlight ? "gradient-text" : "text-white")}>
+          {animate !== undefined
+            ? <AnimatedCounter value={animate} prefix="$" />
+            : value}
         </p>
         {subtext && <p className="text-xs text-slate-500 mt-1">{subtext}</p>}
       </CardContent>
@@ -62,100 +62,161 @@ function MetricCard({ label, value, subtext, highlight, icon }: MetricCardProps)
   );
 }
 
-// ─── Recommendation Card ──────────────────────────────────────────────────
+// ─── AI Summary Box ───────────────────────────────────────────────────────
+function AISummaryBox({ result }: { result: AuditResult }) {
+  const [summary, setSummary] = useState("");
+  const [isAI, setIsAI] = useState(false);
+  const [loading, setLoading] = useState(true);
 
-function RecommendationCard({ rec }: { rec: AuditRecommendation }) {
-  const hasSavings = rec.monthlySavings > 0;
-  const priorityLabel = getPriorityLabel(rec.priority);
-  const priorityColor = getPriorityColor(rec.priority);
-
-  const badgeVariant =
-    rec.priority === "high"
-      ? "danger"
-      : rec.priority === "medium"
-      ? "warning"
-      : rec.priority === "none"
-      ? "success"
-      : "info";
-
-  const borderColor =
-    rec.priority === "high"
-      ? "border-red-500/20"
-      : rec.priority === "medium"
-      ? "border-yellow-500/20"
-      : rec.priority === "none"
-      ? "border-emerald-500/20"
-      : "border-blue-500/20";
+  useEffect(() => {
+    let cancelled = false;
+    generateAuditSummary(result).then(({ text, generatedByAI }) => {
+      if (cancelled) return;
+      setSummary(text);
+      setIsAI(generatedByAI);
+      setLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [result]);
 
   return (
-    <Card
-      hover
-      className={cn("transition-all duration-300 animate-fade-in-up", borderColor)}
-    >
-      <CardContent className="p-6">
-        {/* Tool header */}
-        <div className="flex items-start justify-between gap-4 mb-4">
+    <Card className="border-violet-500/20 bg-gradient-to-br from-violet-500/8 via-transparent to-indigo-500/5 mb-8">
+      <CardContent className="p-5">
+        <div className="flex items-center gap-2 mb-3">
+          <Sparkles className="h-4 w-4 text-violet-400" aria-hidden="true" />
+          <span className="text-xs font-medium text-violet-400 uppercase tracking-wider">
+            {isAI ? "AI-Generated Summary" : "Audit Summary"}
+          </span>
+        </div>
+        {loading ? (
+          <div className="space-y-2 animate-pulse">
+            <div className="h-3 bg-white/5 rounded w-full" />
+            <div className="h-3 bg-white/5 rounded w-5/6" />
+            <div className="h-3 bg-white/5 rounded w-4/6" />
+          </div>
+        ) : (
+          <p className="text-sm text-slate-300 leading-relaxed">{summary}</p>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ─── Savings Chart ────────────────────────────────────────────────────────
+function SavingsChart({ recs }: { recs: AuditRecommendation[] }) {
+  const data = recs
+    .filter((r) => r.currentMonthlySpend > 0)
+    .map((r) => ({
+      name: r.tool.replace("GitHub ", "GH ").replace(" API", " API"),
+      current: r.currentMonthlySpend,
+      optimized: r.optimizedMonthlySpend,
+      savings: r.monthlySavings,
+    }));
+
+  if (data.length === 0) return null;
+
+  return (
+    <Card className="mb-8">
+      <CardHeader>
+        <CardTitle className="text-sm font-medium text-slate-400">Monthly Spend — Current vs Optimized</CardTitle>
+      </CardHeader>
+      <CardContent className="pt-0">
+        <div className="h-48" role="img" aria-label="Bar chart comparing current vs optimized monthly spend per tool">
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={data} barGap={4} margin={{ top: 0, right: 8, left: 0, bottom: 0 }}>
+              <XAxis dataKey="name" tick={{ fill: "#64748b", fontSize: 11 }} axisLine={false} tickLine={false} />
+              <YAxis tick={{ fill: "#64748b", fontSize: 11 }} axisLine={false} tickLine={false}
+                tickFormatter={(v) => `$${v}`} width={45} />
+              <Tooltip
+                contentStyle={{ background: "#0d0d14", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8 }}
+                labelStyle={{ color: "#fff", fontSize: 12 }}
+                formatter={(v, name) => [`$${Number(v ?? 0)}`, name === "current" ? "Current" : "Optimized"] as [string, string]}
+              />
+              <Bar dataKey="current" radius={[4, 4, 0, 0]} name="current">
+                {data.map((_, i) => <Cell key={i} fill="rgba(100,116,139,0.4)" />)}
+              </Bar>
+              <Bar dataKey="optimized" radius={[4, 4, 0, 0]} name="optimized">
+                {data.map((_, i) => <Cell key={i} fill="rgba(124,58,237,0.6)" />)}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+        <div className="flex gap-4 mt-2 justify-center">
+          {[{ color: "bg-slate-500/40", label: "Current" }, { color: "bg-violet-500/60", label: "Optimized" }].map(({ color, label }) => (
+            <div key={label} className="flex items-center gap-1.5 text-xs text-slate-500">
+              <span className={cn("h-2.5 w-2.5 rounded-sm", color)} aria-hidden="true" />
+              {label}
+            </div>
+          ))}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ─── Recommendation Card ──────────────────────────────────────────────────
+function RecommendationCard({ rec }: { rec: AuditRecommendation }) {
+  const hasSavings = rec.monthlySavings > 0;
+  const badgeVariant = rec.priority === "high" ? "danger" : rec.priority === "medium" ? "warning" : rec.priority === "none" ? "success" : "info";
+  const borderColor = rec.priority === "high" ? "border-red-500/20" : rec.priority === "medium" ? "border-yellow-500/20" : rec.priority === "none" ? "border-emerald-500/20" : "border-blue-500/20";
+
+  return (
+    <Card hover className={cn("transition-all duration-300", borderColor)}>
+      <CardContent className="p-5">
+        <div className="flex items-start justify-between gap-4 mb-3">
           <div className="flex items-center gap-3">
-            <div
-              className={cn(
-                "flex h-10 w-10 items-center justify-center rounded-xl text-lg shrink-0",
-                hasSavings ? "bg-white/8" : "bg-emerald-500/10"
-              )}
-              aria-hidden="true"
-            >
-              {hasSavings ? (
-                rec.priority === "high" ? "⚠️" : "💡"
-              ) : (
-                "✅"
-              )}
+            <div className={cn("flex h-10 w-10 items-center justify-center rounded-xl text-lg shrink-0",
+              hasSavings ? "bg-white/8" : "bg-emerald-500/10"
+            )} aria-hidden="true">
+              {hasSavings ? (rec.priority === "high" ? "⚠️" : "💡") : "✅"}
             </div>
             <div>
-              <h3 className="font-semibold text-white">{rec.tool}</h3>
+              <h3 className="font-semibold text-white text-sm">{rec.tool}</h3>
               <p className="text-xs text-slate-500">
                 {rec.currentPlan}
                 {rec.recommendedPlan && rec.recommendedPlan !== rec.currentPlan && (
-                  <>
-                    {" "}
-                    <span aria-hidden="true">→</span>{" "}
-                    <span className="text-violet-400">{rec.recommendedPlan}</span>
-                  </>
+                  <> <span aria-hidden="true">→</span> <span className="text-violet-400">{rec.recommendedPlan}</span></>
                 )}
               </p>
             </div>
           </div>
-
-          <div className="flex flex-col items-end gap-1.5 shrink-0">
-            <Badge variant={badgeVariant}>{priorityLabel}</Badge>
+          <div className="flex flex-col items-end gap-1 shrink-0">
+            <Badge variant={badgeVariant}>{getPriorityLabel(rec.priority)}</Badge>
             {hasSavings && (
-              <span className="text-xs text-slate-500 font-mono-numbers">
-                Save {formatPercent(rec.savingsPercent)}
-              </span>
+              <span className="text-xs text-slate-500 font-mono-numbers">Save {formatPercent(rec.savingsPercent)}</span>
             )}
           </div>
         </div>
 
-        {/* Reason */}
-        <p className="text-sm text-slate-400 leading-relaxed mb-4">{rec.reason}</p>
+        <p className="text-sm text-slate-400 leading-relaxed mb-3">{rec.reason}</p>
 
-        {/* Savings breakdown */}
+        {/* Confidence */}
+        <div className="flex items-center gap-2 mb-3">
+          <span className="text-xs text-slate-600">Confidence</span>
+          <div className="flex-1 h-1 bg-white/5 rounded-full overflow-hidden max-w-[80px]">
+            <div className="h-full bg-violet-500/60 rounded-full" style={{ width: `${rec.confidenceScore}%` }} aria-label={`${rec.confidenceScore}% confidence`} />
+          </div>
+          <span className="text-xs text-slate-600 font-mono-numbers">{rec.confidenceScore}%</span>
+        </div>
+
         {hasSavings && (
-          <div className="rounded-lg bg-white/4 border border-white/8 p-4 grid grid-cols-3 gap-3">
+          <div className="rounded-lg bg-white/4 border border-white/8 p-3 grid grid-cols-3 gap-2">
             <div className="text-center">
-              <p className="text-xs text-slate-500 mb-1">Current</p>
+              <p className="text-xs text-slate-500 mb-0.5">Current</p>
               <p className="text-sm font-semibold text-white font-mono-numbers">
-                {formatCurrency(rec.currentMonthlySpend)}<span className="text-slate-500 font-normal text-xs">/mo</span>
+                {formatCurrency(rec.currentMonthlySpend)}<span className="text-slate-500 text-xs font-normal">/mo</span>
               </p>
             </div>
-            <div className="text-center flex flex-col items-center justify-center">
+            <div className="flex items-center justify-center">
               <TrendingDown className="h-4 w-4 text-emerald-400" aria-hidden="true" />
             </div>
             <div className="text-center">
-              <p className="text-xs text-slate-500 mb-1">Optimized</p>
+              <p className="text-xs text-slate-500 mb-0.5">Optimized</p>
               <p className="text-sm font-semibold text-emerald-400 font-mono-numbers">
-                {formatCurrency(rec.optimizedMonthlySpend)}<span className="text-emerald-600 font-normal text-xs">/mo</span>
+                {formatCurrency(rec.optimizedMonthlySpend)}<span className="text-emerald-600 text-xs font-normal">/mo</span>
               </p>
             </div>
-            <div className="col-span-3 border-t border-white/8 pt-3 mt-1 flex justify-between items-center">
+            <div className="col-span-3 border-t border-white/8 pt-2 mt-1 flex justify-between">
               <div>
                 <p className="text-xs text-slate-500">Monthly savings</p>
                 <p className="text-sm font-bold text-emerald-400 font-mono-numbers">+{formatCurrency(rec.monthlySavings)}</p>
@@ -173,7 +234,6 @@ function RecommendationCard({ rec }: { rec: AuditRecommendation }) {
 }
 
 // ─── Empty State ──────────────────────────────────────────────────────────
-
 function EmptyState() {
   return (
     <div className="flex flex-col items-center justify-center min-h-[60vh] text-center px-4">
@@ -181,39 +241,30 @@ function EmptyState() {
         <RotateCcw className="h-8 w-8 text-slate-500" aria-hidden="true" />
       </div>
       <h2 className="text-2xl font-bold text-white mb-3">No audit data found</h2>
-      <p className="text-slate-400 mb-8 max-w-sm">
-        Head to the audit form and add your AI tools to see your savings analysis.
-      </p>
+      <p className="text-slate-400 mb-8 max-w-sm">Add your AI tools in the audit form to see your personalized savings analysis.</p>
       <Link href="/audit">
-        <Button size="lg">
-          Start Your Audit
-          <ArrowRight className="h-4 w-4" aria-hidden="true" />
-        </Button>
+        <Button size="lg">Start Your Audit <ArrowRight className="h-4 w-4" aria-hidden="true" /></Button>
       </Link>
     </div>
   );
 }
 
 // ─── Results Page ─────────────────────────────────────────────────────────
-
 export default function ResultsPage() {
   const { tools, isLoaded, clearTools } = useAuditStore();
   const [showConfirmClear, setShowConfirmClear] = useState(false);
 
-  // Run the audit engine on loaded tools
   const auditResult: AuditResult | null = useMemo(() => {
     if (!isLoaded || tools.length === 0) return null;
     return runAudit(tools);
   }, [tools, isLoaded]);
 
-  // Sort recommendations: high priority first, then by savings desc
   const sortedRecs = useMemo(() => {
     if (!auditResult) return [];
-    const priorityOrder = { high: 0, medium: 1, low: 2, none: 3 };
+    const order = { high: 0, medium: 1, low: 2, none: 3 };
     return [...auditResult.recommendations].sort((a, b) => {
-      const pDiff = priorityOrder[a.priority] - priorityOrder[b.priority];
-      if (pDiff !== 0) return pDiff;
-      return b.yearlySavings - a.yearlySavings;
+      const d = order[a.priority] - order[b.priority];
+      return d !== 0 ? d : b.yearlySavings - a.yearlySavings;
     });
   }, [auditResult]);
 
@@ -222,228 +273,164 @@ export default function ResultsPage() {
 
   if (!isLoaded) {
     return (
-      <div className="mx-auto max-w-3xl py-12 px-4 sm:px-6 space-y-4" aria-label="Loading audit results…">
+      <div className="mx-auto max-w-3xl py-12 px-4 sm:px-6 space-y-4" aria-label="Loading audit results">
         {[1, 2, 3].map((i) => <SkeletonCard key={i} />)}
       </div>
     );
   }
 
-  if (!auditResult) {
-    return <EmptyState />;
-  }
+  if (!auditResult) return <EmptyState />;
 
   const hasSavings = auditResult.totalMonthlySavings > 0;
 
   return (
     <div className="relative py-12 px-4 sm:px-6 min-h-screen">
-      {/* Background */}
-      <div className="pointer-events-none absolute inset-0 -z-10">
+      <div className="pointer-events-none absolute inset-0 -z-10" aria-hidden="true">
         <div className="absolute top-0 left-1/3 w-[600px] h-[400px] bg-violet-600/8 rounded-full blur-3xl" />
         <div className="absolute top-1/2 right-0 w-[400px] h-[400px] bg-emerald-600/5 rounded-full blur-3xl" />
       </div>
 
       <div className="mx-auto max-w-3xl">
-
         {/* Header */}
         <div className="mb-10">
-          <Link
-            href="/audit"
-            className="inline-flex items-center gap-1.5 text-sm text-slate-500 hover:text-white transition-colors mb-6"
-          >
-            <ArrowLeft className="h-4 w-4" aria-hidden="true" />
-            Back to Audit Form
+          <Link href="/audit" className="inline-flex items-center gap-1.5 text-sm text-slate-500 hover:text-white transition-colors mb-6">
+            <ArrowLeft className="h-4 w-4" aria-hidden="true" /> Back to Audit Form
           </Link>
-
           <div className="flex items-start justify-between gap-4 flex-wrap">
             <div>
               <Badge variant="info" className="mb-3">
-                <Sparkles className="h-3.5 w-3.5" aria-hidden="true" />
-                Audit Complete
+                <Sparkles className="h-3.5 w-3.5" aria-hidden="true" /> Audit Complete
               </Badge>
-              <h1 className="text-3xl sm:text-4xl font-bold text-white">
-                Your Savings Report
-              </h1>
+              <h1 className="text-3xl sm:text-4xl font-bold text-white">Your Savings Report</h1>
               <p className="text-slate-400 mt-2 text-sm">
-                Analyzed {tools.length} tool{tools.length !== 1 ? "s" : ""} ·{" "}
-                {new Date(auditResult.generatedAt).toLocaleDateString("en-US", {
-                  month: "long",
-                  day: "numeric",
-                  year: "numeric",
-                })}
+                {tools.length} tool{tools.length !== 1 ? "s" : ""} analyzed ·{" "}
+                {new Date(auditResult.generatedAt).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}
               </p>
             </div>
-            <div className="flex gap-2">
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setShowConfirmClear(true)}
-              >
-                <RotateCcw className="h-4 w-4" aria-hidden="true" />
-                Reset
-              </Button>
-            </div>
+            <Button variant="ghost" size="sm" onClick={() => setShowConfirmClear(true)}>
+              <RotateCcw className="h-4 w-4" aria-hidden="true" /> Reset
+            </Button>
           </div>
         </div>
 
-        {/* Confirm clear modal */}
+        {/* Confirm reset dialog */}
         {showConfirmClear && (
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="confirm-clear-title"
-            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
-          >
+          <div role="dialog" aria-modal="true" aria-labelledby="confirm-clear-title"
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
             <Card className="max-w-sm w-full border-red-500/20">
               <CardContent className="p-6 text-center">
                 <XCircle className="h-10 w-10 text-red-400 mx-auto mb-3" aria-hidden="true" />
-                <h2 id="confirm-clear-title" className="font-semibold text-white mb-2">
-                  Reset Audit Data?
-                </h2>
-                <p className="text-sm text-slate-400 mb-5">
-                  This will clear all your added tools and saved audit results. This action cannot be undone.
-                </p>
+                <h2 id="confirm-clear-title" className="font-semibold text-white mb-2">Reset Audit Data?</h2>
+                <p className="text-sm text-slate-400 mb-5">This clears all tools and results. This cannot be undone.</p>
                 <div className="flex gap-3">
-                  <Button
-                    variant="destructive"
-                    size="sm"
-                    className="flex-1"
-                    onClick={() => {
-                      clearTools();
-                      setShowConfirmClear(false);
-                    }}
-                  >
-                    Yes, Reset
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    className="flex-1"
-                    onClick={() => setShowConfirmClear(false)}
-                  >
-                    Cancel
-                  </Button>
+                  <Button variant="destructive" size="sm" className="flex-1"
+                    onClick={() => { clearTools(); setShowConfirmClear(false); }}>Yes, Reset</Button>
+                  <Button variant="secondary" size="sm" className="flex-1"
+                    onClick={() => setShowConfirmClear(false)}>Cancel</Button>
                 </div>
               </CardContent>
             </Card>
           </div>
         )}
 
-        {/* Summary metrics */}
+        {/* Metric cards */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-8">
-          <MetricCard
-            label="Monthly Savings"
-            value={formatCurrency(auditResult.totalMonthlySavings)}
-            subtext="per month"
-            highlight={hasSavings}
-            icon={<TrendingDown className="h-5 w-5 text-violet-400" aria-hidden="true" />}
-          />
-          <MetricCard
-            label="Annual Savings"
-            value={formatCurrency(auditResult.totalYearlySavings)}
+          <MetricCard label="Monthly Savings" value="" animate={auditResult.totalMonthlySavings}
+            subtext="per month" highlight={hasSavings}
+            icon={<TrendingDown className="h-5 w-5 text-violet-400" aria-hidden="true" />} />
+          <MetricCard label="Annual Savings" value="" animate={auditResult.totalYearlySavings}
             subtext="per year"
-            icon={<Trophy className="h-5 w-5 text-yellow-400" aria-hidden="true" />}
-          />
-          <MetricCard
-            label="Current Spend"
-            value={formatCurrency(auditResult.totalMonthlySpend)}
-            subtext="monthly total"
-          />
-          <MetricCard
-            label="Savings Rate"
-            value={formatPercent(auditResult.overallSavingsPercent)}
-            subtext="of total spend"
-          />
+            icon={<Trophy className="h-5 w-5 text-yellow-400" aria-hidden="true" />} />
+          <MetricCard label="Current Spend" value={formatCurrency(auditResult.totalMonthlySpend)} subtext="monthly total" />
+          <MetricCard label="Savings Rate" value={formatPercent(auditResult.overallSavingsPercent)} subtext="of total spend" />
         </div>
 
         {/* Status banner */}
-        <div
-          className={cn(
-            "rounded-xl border p-4 mb-8 flex items-start gap-3",
-            hasSavings
-              ? "border-yellow-500/20 bg-yellow-500/5"
-              : "border-emerald-500/20 bg-emerald-500/5"
-          )}
-          role="status"
-        >
-          {hasSavings ? (
-            <AlertTriangle className="h-5 w-5 text-yellow-400 shrink-0 mt-0.5" aria-hidden="true" />
-          ) : (
-            <CheckCircle2 className="h-5 w-5 text-emerald-400 shrink-0 mt-0.5" aria-hidden="true" />
-          )}
+        <div className={cn("rounded-xl border p-4 mb-8 flex items-start gap-3",
+          hasSavings ? "border-yellow-500/20 bg-yellow-500/5" : "border-emerald-500/20 bg-emerald-500/5"
+        )} role="status">
+          {hasSavings
+            ? <AlertTriangle className="h-5 w-5 text-yellow-400 shrink-0 mt-0.5" aria-hidden="true" />
+            : <CheckCircle2 className="h-5 w-5 text-emerald-400 shrink-0 mt-0.5" aria-hidden="true" />}
           <div>
             {hasSavings ? (
               <>
                 <p className="font-medium text-white text-sm">
-                  We found{" "}
-                  <span className="text-emerald-400 font-mono-numbers">
-                    {formatCurrency(auditResult.totalYearlySavings)}
-                  </span>{" "}
-                  in potential annual savings
+                  We found <span className="text-emerald-400 font-mono-numbers">{formatCurrency(auditResult.totalYearlySavings)}</span> in potential annual savings
                 </p>
                 <p className="text-xs text-slate-400 mt-0.5">
                   {highPriorityCount > 0
-                    ? `${highPriorityCount} high-priority optimization${highPriorityCount > 1 ? "s" : ""} found. Act on these first.`
-                    : "Review the recommendations below to start saving."}
+                    ? `${highPriorityCount} high-priority optimization${highPriorityCount > 1 ? "s" : ""} — act on these first.`
+                    : "Review the recommendations below."}
                 </p>
               </>
             ) : (
               <>
-                <p className="font-medium text-white text-sm">
-                  Your AI stack looks well-optimized! 🎉
-                </p>
-                <p className="text-xs text-slate-400 mt-0.5">
-                  Based on current pricing and your team size, we didn&apos;t find significant savings opportunities.
-                </p>
+                <p className="font-medium text-white text-sm">Your AI stack looks well-optimized! 🎉</p>
+                <p className="text-xs text-slate-400 mt-0.5">No significant savings opportunities at current pricing and team size.</p>
               </>
             )}
           </div>
         </div>
 
-        {/* Tool Recommendations */}
+        {/* AI Summary */}
+        <AISummaryBox result={auditResult} />
+
+        {/* Savings Chart */}
+        <SavingsChart recs={sortedRecs} />
+
+        {/* Recommendations */}
         <section aria-labelledby="recs-heading">
           <div className="flex items-center justify-between mb-5">
-            <h2 id="recs-heading" className="text-lg font-semibold text-white">
-              Tool Recommendations
-            </h2>
-            <div className="flex gap-2 text-xs text-slate-500">
+            <h2 id="recs-heading" className="text-lg font-semibold text-white">Per-Tool Recommendations</h2>
+            <div className="flex gap-3 text-xs text-slate-500">
               {highPriorityCount > 0 && (
                 <span className="flex items-center gap-1">
-                  <span className="h-2 w-2 rounded-full bg-red-400 inline-block" aria-hidden="true" />
-                  {highPriorityCount} high
+                  <span className="h-2 w-2 rounded-full bg-red-400" aria-hidden="true" /> {highPriorityCount} high
                 </span>
               )}
               {optimizedCount > 0 && (
                 <span className="flex items-center gap-1">
-                  <span className="h-2 w-2 rounded-full bg-emerald-400 inline-block" aria-hidden="true" />
-                  {optimizedCount} optimized
+                  <span className="h-2 w-2 rounded-full bg-emerald-400" aria-hidden="true" /> {optimizedCount} optimized
                 </span>
               )}
             </div>
           </div>
-
           <div className="space-y-4">
-            {sortedRecs.map((rec) => (
-              <RecommendationCard key={rec.toolId} rec={rec} />
-            ))}
+            {sortedRecs.map((rec) => <RecommendationCard key={rec.toolId} rec={rec} />)}
           </div>
         </section>
 
-        {/* Action footer */}
+        {/* Credex CTA for high savings */}
+        {auditResult.totalMonthlySavings >= 200 && (
+          <Card gradient className="mt-8 border-violet-500/20">
+            <CardContent className="p-6 flex items-start gap-4">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-violet-600 to-indigo-600 shrink-0">
+                <Zap className="h-5 w-5 text-white" aria-hidden="true" />
+              </div>
+              <div className="flex-1">
+                <p className="font-semibold text-white mb-1">Want help implementing these savings?</p>
+                <p className="text-sm text-slate-400 mb-3">
+                  Credex can implement your top optimizations — contract renegotiation, plan migrations, and spend monitoring — in under a week.
+                </p>
+                <Button size="sm">
+                  Book a Free Consultation <ArrowRight className="h-4 w-4" aria-hidden="true" />
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Footer actions */}
         <div className="mt-10 flex flex-col sm:flex-row gap-4 items-center justify-between">
           <Link href="/audit">
             <Button variant="secondary">
-              <ArrowLeft className="h-4 w-4" aria-hidden="true" />
-              Edit Tools
+              <ArrowLeft className="h-4 w-4" aria-hidden="true" /> Edit Tools
             </Button>
           </Link>
-          <div className="flex gap-3">
-            <p className="text-xs text-slate-600 self-center hidden sm:block">
-              Results saved locally in your browser
-            </p>
-            <Link href="/">
-              <Button variant="ghost">Back to Home</Button>
-            </Link>
-          </div>
+          <Link href="/">
+            <Button variant="ghost">Back to Home</Button>
+          </Link>
         </div>
       </div>
     </div>
