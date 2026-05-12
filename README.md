@@ -113,10 +113,6 @@ Add environment variables in the Vercel dashboard (Settings → Environment Vari
 - [ ] User accounts + audit history (Clerk)
 - [ ] Analytics (PostHog)
 
-## 📄 License
+## DAY2 TASK FINISHED
+Updated project documentation
 
-MIT — free to use and modify.
-
----
-
-Built with ❤️ for the startup community. Not affiliated with any AI company.
