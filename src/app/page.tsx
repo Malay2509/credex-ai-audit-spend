@@ -299,7 +299,7 @@ export default function HomePage() {
             {/* Connector lines (hidden on mobile) */}
             <div className="hidden md:block absolute top-8 left-[calc(16.67%+1rem)] right-[calc(16.67%+1rem)] h-px bg-gradient-to-r from-transparent via-violet-500/30 to-transparent" aria-hidden="true" />
 
-            {steps.map(({ step, title, description }, i) => (
+            {steps.map(({ step, title, description }) => (
               <div key={step} className="relative flex flex-col items-center text-center">
                 <div className="relative z-10 mb-5 flex h-16 w-16 items-center justify-center rounded-full border border-violet-500/30 bg-violet-500/10 text-violet-400 font-bold text-lg font-mono-numbers">
                   {step}

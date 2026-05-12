@@ -14,7 +14,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { SkeletonCard } from "@/components/ui/Skeleton";
 import { useAuditStore } from "@/hooks/useAuditStore";
-import { runAudit, getPriorityLabel, getPriorityColor } from "@/lib/auditEngine";
+import { runAudit, getPriorityLabel } from "@/lib/auditEngine";
 import { generateAuditSummary } from "@/lib/generateSummary";
 import { AuditResult, AuditRecommendation } from "@/types/audit";
 import { formatCurrency, formatPercent, cn } from "@/lib/utils";
@@ -25,16 +25,21 @@ function AnimatedCounter({ value, prefix = "", suffix = "", duration = 1200 }: {
 }) {
   const [display, setDisplay] = useState(0);
   useEffect(() => {
-    if (value === 0) { setDisplay(0); return; }
+    let rafId: number;
+    if (value === 0) { 
+      rafId = requestAnimationFrame(() => setDisplay(0));
+      return () => cancelAnimationFrame(rafId);
+    }
     const start = Date.now();
     const tick = () => {
       const elapsed = Date.now() - start;
       const progress = Math.min(elapsed / duration, 1);
       const eased = 1 - Math.pow(1 - progress, 3);
       setDisplay(Math.round(value * eased));
-      if (progress < 1) requestAnimationFrame(tick);
+      if (progress < 1) rafId = requestAnimationFrame(tick);
     };
-    requestAnimationFrame(tick);
+    rafId = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(rafId);
   }, [value, duration]);
   return <span className="font-mono-numbers">{prefix}{display.toLocaleString()}{suffix}</span>;
 }

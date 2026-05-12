@@ -21,24 +21,29 @@ export function useAuditStore() {
   const [isLoaded, setIsLoaded] = useState(false);
 
   useEffect(() => {
+    let initialTools: AuditToolEntry[] = [];
     try {
       const stored = localStorage.getItem(STORAGE_KEY);
       if (stored) {
         const parsed = JSON.parse(stored) as AuditToolEntry[];
         // Migrate old entries that lack teamSize
-        const migrated = parsed.map((t) => ({
+        initialTools = parsed.map((t) => ({
           ...t,
           teamSize: (t as AuditToolEntry & { teamSize?: number }).teamSize ?? t.seats,
           // Migrate old UseCase enum to new simplified values
           useCase: migrateUseCase((t as AuditToolEntry & { useCase: string }).useCase),
         }));
-        setTools(migrated);
       }
     } catch (error) {
       console.warn("Failed to load audit tools from localStorage:", error);
-    } finally {
-      setIsLoaded(true);
     }
+    
+    const timer = setTimeout(() => {
+      setTools(initialTools);
+      setIsLoaded(true);
+    }, 0);
+
+    return () => clearTimeout(timer);
   }, []);
 
   useEffect(() => {

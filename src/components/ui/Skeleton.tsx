@@ -1,12 +1,10 @@
 import { cn } from "@/lib/utils";
 
-interface SkeletonProps extends React.HTMLAttributes<HTMLDivElement> {}
-
 /**
  * Skeleton loading placeholder component.
  * Used for loading states across cards and text blocks.
  */
-export function Skeleton({ className, ...props }: SkeletonProps) {
+export function Skeleton({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
   return (
     <div
       className={cn(
