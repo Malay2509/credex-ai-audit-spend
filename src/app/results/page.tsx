@@ -326,8 +326,8 @@ export default function ResultsPage() {
       });
 
       setSaveSuccess(true);
-    } catch (err: any) {
-      setSaveError(err.message || "Something went wrong saving your report.");
+    } catch (err: unknown) {
+      setSaveError(err instanceof Error ? err.message : "Something went wrong saving your report.");
     } finally {
       setIsSaving(false);
     }
@@ -414,7 +414,7 @@ export default function ResultsPage() {
                     </div>
                     <h2 className="text-xl font-bold text-white">Report Saved & Sent!</h2>
                     <p className="text-sm text-slate-400">
-                      We've emailed your savings summary. You can also access your public report below.
+                      We&apos;ve emailed your savings summary. You can also access your public report below.
                     </p>
                     <div className="mt-4 p-3 bg-white/5 rounded-lg border border-white/10 break-all text-xs text-slate-300 select-all">
                       {reportUrl}

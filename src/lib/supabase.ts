@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import { AuditResult } from "@/types/audit";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "https://dummy.supabase.co";
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "dummy";
@@ -18,12 +19,12 @@ export type Lead = {
 export type SavedAudit = {
   id?: string;
   lead_id: string; // Foreign key
-  audit_data: any; // Stored as JSONB
+  audit_data: AuditResult; // Stored as JSONB
   total_savings: number;
   created_at?: string;
 };
 
-export async function saveLeadAndAudit(lead: Omit<Lead, "id" | "created_at">, auditData: any, totalSavings: number) {
+export async function saveLeadAndAudit(lead: Omit<Lead, "id" | "created_at">, auditData: AuditResult, totalSavings: number) {
   if (supabaseUrl === "https://dummy.supabase.co" || supabaseAnonKey === "dummy") {
     console.warn("Supabase credentials missing, simulating save...");
     return { auditId: "demo-id-" + Date.now() };
