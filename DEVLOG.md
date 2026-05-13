@@ -56,3 +56,27 @@
 - Add transactional email confirmations using Resend
 - Improve Open Graph metadata and deployment readiness
 - Begin final documentation and user interview summaries
+
+## Day 3 — 2026-05-13
+
+**Hours worked:** 5
+
+**What I did:**
+- Integrated Supabase for lead capture and report storage, using the `@supabase/supabase-js` SDK.
+- Built a shareable public URL feature (`/results/[id]`) that strictly strips out PII and only exposes the required aggregated data.
+- Built a Lead Capture React Hook Form with Zod validation.
+- Added a Resend transactional email API route (`/api/email`) to send users their report and savings breakdown.
+- Configured dynamic Open Graph metadata for the shareable URLs to improve social sharing.
+- Fixed a Next.js static generation build error regarding environment variables on dynamic pages.
+- Drafted final business documents including GTM strategy, economic modeling, metrics, and user interviews.
+- Polished overall documentation, including README and ARCHITECTURE.
+
+**What I learned:**
+- Next.js attempts to pre-render dynamic routes on build. When `createClient` needs env variables, it crashes if they are not explicitly provided or mocked during build time.
+- Generating Open Graph images dynamically is incredibly powerful for a growth-oriented SaaS tool because it immediately provides social proof.
+
+**Blockers / what I'm stuck on:**
+- No major blockers. The project is effectively complete and ready for submission.
+
+**Plan for tomorrow:**
+- Project is complete. Will review all documentation and record any final demo videos if required by the assignment.

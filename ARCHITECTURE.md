@@ -65,6 +65,41 @@ User Input → React Hook Form (Zod validation)
 - **Deterministic**: same input always produces same output. No ML, no randomness.
 - **No PII leaves the browser**: spend data never hits a server at MVP stage.
 
+## Day 3 Post-Audit Data Flow (Lead Capture & Sharing)
+
+```
+User clicks "Save Report" → React Hook Form Modal
+          → /lib/supabase.ts: saveLeadAndAudit()
+          → Supabase (leads & audits tables)
+          → /api/email: Send Resend email
+          → Generates public report URL (/results/[id])
+```
+
+**Key properties of this flow:**
+- **AI Summary generation:** is invoked server-side on the fly or cached.
+- **Privacy-first:** Public URLs only expose aggregated tool metrics and savings, never email or company name.
+
+## Database Schema (Supabase PostgreSQL)
+
+```sql
+CREATE TABLE leads (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  email TEXT NOT NULL,
+  company_name TEXT,
+  role TEXT,
+  team_size TEXT,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE audits (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  lead_id UUID REFERENCES leads(id) ON DELETE CASCADE,
+  audit_data JSONB NOT NULL,
+  total_savings NUMERIC NOT NULL,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+```
+
 ## Folder Structure
 
 ```

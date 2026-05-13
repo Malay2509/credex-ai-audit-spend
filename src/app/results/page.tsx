@@ -18,6 +18,19 @@ import { runAudit, getPriorityLabel } from "@/lib/auditEngine";
 import { generateAuditSummary } from "@/lib/generateSummary";
 import { AuditResult, AuditRecommendation } from "@/types/audit";
 import { formatCurrency, formatPercent, cn } from "@/lib/utils";
+import { saveLeadAndAudit } from "@/lib/supabase";
+import { z } from "zod";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { Input } from "@/components/ui/Input";
+
+const leadSchema = z.object({
+  email: z.string().email("Please enter a valid email address."),
+  company_name: z.string().optional(),
+  role: z.string().min(2, "Please enter your role."),
+  team_size: z.string().min(1, "Please select a team size."),
+});
+type LeadFormData = z.infer<typeof leadSchema>;
 
 // ─── Animated Counter ─────────────────────────────────────────────────────
 function AnimatedCounter({ value, prefix = "", suffix = "", duration = 1200 }: {
@@ -258,6 +271,15 @@ function EmptyState() {
 export default function ResultsPage() {
   const { tools, isLoaded, clearTools } = useAuditStore();
   const [showConfirmClear, setShowConfirmClear] = useState(false);
+  const [showLeadCapture, setShowLeadCapture] = useState(false);
+  const [saveSuccess, setSaveSuccess] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
+  const [reportUrl, setReportUrl] = useState("");
+
+  const { register, handleSubmit, formState: { errors } } = useForm<LeadFormData>({
+    resolver: zodResolver(leadSchema),
+  });
 
   const auditResult: AuditResult | null = useMemo(() => {
     if (!isLoaded || tools.length === 0) return null;
@@ -275,6 +297,41 @@ export default function ResultsPage() {
 
   const highPriorityCount = sortedRecs.filter((r) => r.priority === "high").length;
   const optimizedCount = sortedRecs.filter((r) => r.priority === "none").length;
+
+  const onSaveReport = async (data: LeadFormData) => {
+    if (!auditResult) return;
+    setIsSaving(true);
+    setSaveError("");
+    try {
+      // Save to Supabase
+      const { auditId } = await saveLeadAndAudit(data, auditResult, auditResult.totalYearlySavings);
+      
+      const shareUrl = `${window.location.origin}/results/${auditId}`;
+      setReportUrl(shareUrl);
+      
+      // Get AI summary (we can generate it synchronously or fetch from state)
+      const aiSummaryResponse = await generateAuditSummary(auditResult);
+
+      // Send Email
+      await fetch("/api/email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: data.email,
+          reportUrl: shareUrl,
+          totalMonthlySavings: auditResult.totalMonthlySavings,
+          totalYearlySavings: auditResult.totalYearlySavings,
+          aiSummary: aiSummaryResponse.text,
+        }),
+      });
+
+      setSaveSuccess(true);
+    } catch (err: any) {
+      setSaveError(err.message || "Something went wrong saving your report.");
+    } finally {
+      setIsSaving(false);
+    }
+  };
 
   if (!isLoaded) {
     return (
@@ -333,6 +390,87 @@ export default function ResultsPage() {
                   <Button variant="secondary" size="sm" className="flex-1"
                     onClick={() => setShowConfirmClear(false)}>Cancel</Button>
                 </div>
+              </CardContent>
+            </Card>
+          </div>
+        )}
+
+        {/* Lead Capture Modal */}
+        {showLeadCapture && (
+          <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm overflow-y-auto">
+            <Card className="max-w-md w-full border-violet-500/20 shadow-2xl relative my-8">
+              <button 
+                onClick={() => setShowLeadCapture(false)}
+                className="absolute top-4 right-4 text-slate-400 hover:text-white transition-colors"
+                aria-label="Close dialog"
+              >
+                <XCircle className="h-5 w-5" />
+              </button>
+              <CardContent className="p-6 sm:p-8">
+                {saveSuccess ? (
+                  <div className="text-center space-y-4">
+                    <div className="inline-flex h-12 w-12 items-center justify-center rounded-full bg-emerald-500/20 mb-2">
+                      <CheckCircle2 className="h-6 w-6 text-emerald-400" />
+                    </div>
+                    <h2 className="text-xl font-bold text-white">Report Saved & Sent!</h2>
+                    <p className="text-sm text-slate-400">
+                      We've emailed your savings summary. You can also access your public report below.
+                    </p>
+                    <div className="mt-4 p-3 bg-white/5 rounded-lg border border-white/10 break-all text-xs text-slate-300 select-all">
+                      {reportUrl}
+                    </div>
+                    <Button className="w-full mt-4" onClick={() => setShowLeadCapture(false)}>
+                      Close
+                    </Button>
+                  </div>
+                ) : (
+                  <>
+                    <h2 className="text-xl font-bold text-white mb-2">Save Your Savings Report</h2>
+                    <p className="text-sm text-slate-400 mb-6">
+                      Get a permanent link to your audit and an AI summary sent straight to your inbox.
+                    </p>
+                    <form onSubmit={handleSubmit(onSaveReport)} className="space-y-4">
+                      <div>
+                        <label className="block text-xs font-medium text-slate-300 mb-1">Work Email</label>
+                        <Input placeholder="you@company.com" {...register("email")} />
+                        {errors.email && <p className="text-xs text-red-400 mt-1">{errors.email.message}</p>}
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-slate-300 mb-1">Company Name (Optional)</label>
+                        <Input placeholder="Acme Inc." {...register("company_name")} />
+                      </div>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-xs font-medium text-slate-300 mb-1">Your Role</label>
+                          <Input placeholder="Founder, CTO..." {...register("role")} />
+                          {errors.role && <p className="text-xs text-red-400 mt-1">{errors.role.message}</p>}
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-slate-300 mb-1">Team Size</label>
+                          <select 
+                            className="flex h-10 w-full rounded-md border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent disabled:cursor-not-allowed disabled:opacity-50"
+                            {...register("team_size")}
+                          >
+                            <option value="" disabled className="bg-slate-900">Select...</option>
+                            <option value="1-10" className="bg-slate-900">1-10</option>
+                            <option value="11-50" className="bg-slate-900">11-50</option>
+                            <option value="51-200" className="bg-slate-900">51-200</option>
+                            <option value="200+" className="bg-slate-900">200+</option>
+                          </select>
+                          {errors.team_size && <p className="text-xs text-red-400 mt-1">{errors.team_size.message}</p>}
+                        </div>
+                      </div>
+                      {saveError && (
+                        <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-md text-sm text-red-400">
+                          {saveError}
+                        </div>
+                      )}
+                      <Button type="submit" className="w-full mt-2" disabled={isSaving}>
+                        {isSaving ? "Saving..." : "Save Report"}
+                      </Button>
+                    </form>
+                  </>
+                )}
               </CardContent>
             </Card>
           </div>
@@ -433,9 +571,9 @@ export default function ResultsPage() {
               <ArrowLeft className="h-4 w-4" aria-hidden="true" /> Edit Tools
             </Button>
           </Link>
-          <Link href="/">
-            <Button variant="ghost">Back to Home</Button>
-          </Link>
+          <Button onClick={() => setShowLeadCapture(true)} className="bg-violet-600 hover:bg-violet-700 text-white">
+            Save this report <ArrowRight className="h-4 w-4 ml-2" aria-hidden="true" />
+          </Button>
         </div>
       </div>
     </div>
